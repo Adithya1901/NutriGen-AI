@@ -1,0 +1,39 @@
+// App.js
+import React from "react";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+
+import Sidebar from "./Sidebar";
+
+// ✅ IMPORTANT: use DEFAULT imports only
+import Home from "./pages/Home";
+import Members from "./pages/Members";
+import MealPlanPage from "./pages/MealPlanPage";
+import GroceryPage from "./pages/GroceryPage";
+import Recipes from "./pages/Recipes";
+
+function App() {
+  return (
+    <BrowserRouter>
+      <div className="layout">
+        {/* Sidebar */}
+        <Sidebar />
+
+        {/* Main Content */}
+        <div className="content">
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/members" element={<Members />} />
+            <Route path="/mealplan" element={<MealPlanPage />} />
+            <Route path="/grocery" element={<GroceryPage />} />
+            <Route path="/recipes" element={<Recipes />} />
+
+            {/* fallback */}
+            <Route path="*" element={<Home />} />
+          </Routes>
+        </div>
+      </div>
+    </BrowserRouter>
+  );
+}
+
+export default App;
