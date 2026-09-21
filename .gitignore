@@ -1,0 +1,38 @@
+# Environment & Secrets
+.env
+*.env
+backend/.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+*.pyc
+
+# Node & Frontend
+node_modules/
+frontend/node_modules/
+frontend/node_modules/.cache/
+.eslintcache
+build/
+frontend/build/
+.cache/
+
+# Databases
+*.db
+*.sqlite3
+backend/nutrigen.db
+
+# VS Code & IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated
+.DS_Store
+Thumbs.db

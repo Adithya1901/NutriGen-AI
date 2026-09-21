@@ -71,3 +71,4 @@ class CustomGroceryList(Base):
     dates = Column(String)
     meals = Column(String)
     grocery_text = Column(String)
+    budget = Column(String, default="Medium")

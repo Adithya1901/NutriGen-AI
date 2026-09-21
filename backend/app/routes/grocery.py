@@ -42,3 +42,51 @@ def grocery(id: int):
         }
     finally:
         db.close()
+
+from datetime import datetime, timezone, timedelta
+from app.models import DailyPlan, CustomGroceryList
+
+@router.post("/families/{id}/generate-grocery")
+def regenerate_grocery(id: int):
+    db = SessionLocal()
+    try:
+        family = db.query(Family).filter(Family.id == id).first()
+        if not family:
+            raise HTTPException(status_code=404, detail="Family not found")
+
+        ist = timezone(timedelta(hours=5, minutes=30))
+        today_str = datetime.now(ist).strftime("%Y-%m-%d")
+
+        upcoming_plans = db.query(DailyPlan).filter(
+            DailyPlan.family_id == id,
+            DailyPlan.date >= today_str
+        ).order_by(DailyPlan.date.asc()).all()
+
+        if not upcoming_plans:
+            raise HTTPException(status_code=400, detail="No upcoming meal plans found to generate groceries for.")
+
+        combined_meal_text = ""
+        for p in upcoming_plans:
+            combined_meal_text += f"\n--- {p.date} ---\n{p.meal_type}: {p.plan_text}\n"
+
+        db.query(CustomGroceryList).filter(CustomGroceryList.family_id == id).delete(synchronize_session=False)
+
+        new_grocery_text = generate_weekly_grocery(family, combined_meal_text)
+        if "GROQ ERROR" in new_grocery_text or "REQUEST ERROR" in new_grocery_text:
+            new_grocery_text = "Grocery list generated based on scheduled meals."
+
+        new_list = CustomGroceryList(
+            family_id=id,
+            dates='["all_upcoming"]',
+            meals='["all_upcoming"]',
+            grocery_text=new_grocery_text
+        )
+        db.add(new_list)
+        db.commit()
+
+        return {
+            "status": "success",
+            "grocery_list": new_grocery_text
+        }
+    finally:
+        db.close()

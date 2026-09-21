@@ -30,6 +30,7 @@ class FamilyOut(BaseModel):
         from_attributes = True
 
 class DailyPlanResponse(BaseModel):
+    id: int
     date: str
     meal_type: str
     plan_text: str
@@ -41,6 +42,7 @@ class MultiDailyPlanRequest(BaseModel):
     dates: List[str]
     meals: List[str]
     budget: Optional[str] = "Medium"
+    overwrite: Optional[bool] = False
 
 class MultiDailyPlanResponse(BaseModel):
     plans: List[DailyPlanResponse]

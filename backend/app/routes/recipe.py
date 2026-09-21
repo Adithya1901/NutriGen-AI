@@ -6,7 +6,7 @@ from app.ai import generate_recipe
 router = APIRouter()
 
 @router.get("/families/{id}/recipe")
-def get_recipe(id: int, date: str, meal_type: str, language: str = "English", servings: int = 4):
+def get_recipe(id: int, date: str, meal_type: str, language: str = "English"):
     db = SessionLocal()
 
     try:
@@ -29,7 +29,7 @@ def get_recipe(id: int, date: str, meal_type: str, language: str = "English", se
 
         prompt_meal = f"{meal_type} ({meal_description})"
         
-        recipe_text = generate_recipe(date, prompt_meal, language, str(servings))
+        recipe_text = generate_recipe(date, prompt_meal, language)
 
         return {
             "recipe": recipe_text,

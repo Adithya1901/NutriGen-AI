@@ -439,4 +439,61 @@ img:hover {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #475569;
+}
+
+/* Grocery Styles */
+.grocery-item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: rgba(30, 41, 59, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  margin-bottom: 8px;
+  transition: all 0.2s ease;
+}
+
+.grocery-item-row:hover {
+  background: rgba(30, 41, 59, 0.7);
+  border-color: rgba(16, 185, 129, 0.3);
+  transform: translateX(4px);
+}
+
+.grocery-item-row.checked {
+  opacity: 0.5;
+  background: rgba(15, 23, 42, 0.3);
+}
+
+.grocery-item-row.checked .item-name {
+  text-decoration: line-through;
+  color: #64748b;
+}
+
+.custom-checkbox {
+  width: 20px;
+  height: 20px;
+  accent-color: #10b981;
+  cursor: pointer;
+  margin-right: 12px;
+}
+
+.qty-badge {
+  background: rgba(51, 65, 85, 0.6);
+  color: #cbd5e1;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.price-badge {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  border: 1px solid rgba(16, 185, 129, 0.3);
 }

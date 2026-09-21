@@ -82,13 +82,22 @@ function MealPlanPage() {
       await api.post(`/families/${selectedFamily}/multi-daily-plan`, {
         dates,
         meals: selectedMeals,
-        budget: budget
+        budget: budget,
+        overwrite: true
       });
       // reload all upcoming after generating
-      loadUpcomingPlans();
+      await loadUpcomingPlans();
+      setTimeout(() => {
+        const heading = document.getElementById("all-scheduled-plans-heading");
+        if (heading) {
+          heading.scrollIntoView({ behavior: "smooth" });
+        }
+      }, 150);
     } catch (err) {
       console.error(err);
-      setError("Failed to load or generate plan. Please try again.");
+      const detailMsg = err.response?.data?.detail || err.message || "Failed to load or generate plan. Please try again.";
+      setError(detailMsg);
+    } finally {
       setLoading(false);
     }
   };
@@ -123,6 +132,38 @@ function MealPlanPage() {
       console.error(err);
       setError(`Failed to delete meals for ${dateStr}.`);
       setLoading(false);
+    }
+  };
+
+  const getCleanRecipeNames = (text) => {
+    if (!text) return [];
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+    const recipes = [];
+    for (let line of lines) {
+      let cleaned = line.replace(/^[\-\*\•]\s*/, '');
+      if (cleaned.includes(':')) {
+        const parts = cleaned.split(':');
+        const prefix = parts[0].toLowerCase();
+        if (prefix.includes('for ') || prefix.includes('breakfast') || prefix.includes('lunch') || prefix.includes('dinner') || prefix.includes('snack')) {
+          cleaned = parts.slice(1).join(':').trim();
+        }
+      }
+      cleaned = cleaned.replace(/^["']|["']$/g, '').trim();
+      if (cleaned) {
+        recipes.push(cleaned);
+      }
+    }
+    return recipes.length > 0 ? recipes : [text];
+  };
+
+  const getMealIcon = (mealType) => {
+    switch ((mealType || '').toLowerCase()) {
+      case 'breakfast': return '🍳';
+      case 'lunch': return '🥗';
+      case 'dinner': return '🍽️';
+      case 'snacks':
+      case 'snack': return '🥪';
+      default: return '🍲';
     }
   };
 
@@ -207,7 +248,7 @@ function MealPlanPage() {
           disabled={loading}
           style={{ 
             alignSelf: 'flex-start', 
-            background: loading ? "#475569" : "#0ea5e9",
+            background: loading ? "#475569" : "linear-gradient(135deg, #0ea5e9, #2563eb)",
             fontWeight: "bold",
             padding: "12px 24px"
           }}
@@ -216,9 +257,13 @@ function MealPlanPage() {
         </button>
       </div>
 
-      {error && <p style={{ color: "#ef4444" }}>{error}</p>}
+      {error && (
+        <div style={{ marginTop: "15px", padding: "12px 18px", background: "rgba(239, 68, 68, 0.12)", borderLeft: "4px solid #ef4444", color: "#fca5a5", borderRadius: "8px" }}>
+          {error}
+        </div>
+      )}
 
-      <h2 style={{marginTop: "30px", paddingBottom: "10px", borderBottom: "1px solid #334155"}}>📅 All Scheduled Plans</h2>
+      <h2 id="all-scheduled-plans-heading" style={{marginTop: "30px", paddingBottom: "10px", borderBottom: "1px solid #334155"}}>📅 All Scheduled Plans</h2>
 
       {plans.length > 0 && !loading && (
         <div className="anim-fade-in">
@@ -234,19 +279,97 @@ function MealPlanPage() {
                 </button>
               </h2>
               <div className="grid">
-                {datePlans.map((plan, idx) => (
-                  <div key={idx} className="card daily-plan-card" style={{ position: 'relative' }}>
-                    <button 
-                      onClick={() => deleteMealPlan(plan.id)}
-                      style={{ position: 'absolute', top: '10px', right: '10px', background: '#ef4444', padding: '5px 10px', fontSize: '0.8em', borderRadius: '5px' }}
-                    >
-                      Delete
-                    </button>
-                    <h3 className="meal-type-title">{plan.meal_type}</h3>
-                    <div className="pre">{plan.plan_text}</div>
-                    <span style={{ fontSize: '0.8em', color: '#64748b', display: 'block', marginTop: '10px' }}>Generated Date: {plan.date}</span>
-                  </div>
-                ))}
+                {datePlans.map((plan, idx) => {
+                  const recipes = getCleanRecipeNames(plan.plan_text);
+                  const mealIcon = getMealIcon(plan.meal_type);
+
+                  return (
+                    <div key={idx} className="card daily-plan-card" style={{ position: 'relative', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+                          <h3 className="meal-type-title" style={{ margin: 0, borderBottom: 'none', paddingBottom: 0 }}>
+                            <span style={{ fontSize: '1.2em', marginRight: '6px' }}>{mealIcon}</span>
+                            {plan.meal_type}
+                          </h3>
+                          <button 
+                            onClick={() => deleteMealPlan(plan.id)}
+                            title="Delete meal"
+                            style={{ 
+                              background: 'rgba(239, 68, 68, 0.15)', 
+                              color: '#ef4444', 
+                              border: '1px solid rgba(239, 68, 68, 0.3)',
+                              padding: '6px 12px', 
+                              fontSize: '0.75em', 
+                              borderRadius: '8px',
+                              cursor: 'pointer',
+                              fontWeight: '600',
+                              marginTop: 0,
+                              boxShadow: 'none',
+                              transition: 'all 0.2s ease'
+                            }}
+                            onMouseOver={(e) => {
+                              e.currentTarget.style.background = '#ef4444';
+                              e.currentTarget.style.color = '#ffffff';
+                            }}
+                            onMouseOut={(e) => {
+                              e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)';
+                              e.currentTarget.style.color = '#ef4444';
+                            }}
+                          >
+                            Delete
+                          </button>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
+                          {recipes.map((recipeName, rIdx) => (
+                            <div 
+                              key={rIdx} 
+                              style={{
+                                background: 'linear-gradient(135deg, rgba(14, 165, 233, 0.12), rgba(59, 130, 246, 0.06))',
+                                border: '1px solid rgba(56, 189, 248, 0.25)',
+                                borderRadius: '12px',
+                                padding: '14px 16px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '12px',
+                                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.2)',
+                                transition: 'all 0.3s ease'
+                              }}
+                            >
+                              <span style={{ fontSize: '1.2em', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))' }}>✨</span>
+                              <span style={{ 
+                                color: '#f8fafc', 
+                                fontWeight: '600', 
+                                fontSize: '1.05rem', 
+                                letterSpacing: '0.3px',
+                                lineHeight: '1.4'
+                              }}>
+                                {recipeName}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div style={{ marginTop: '20px', paddingTop: '12px', borderTop: '1px solid rgba(255, 255, 255, 0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.78em', color: '#64748b', fontWeight: '500' }}>
+                          Generated Date: {plan.date}
+                        </span>
+                        <span style={{ 
+                          fontSize: '0.72em', 
+                          background: 'rgba(16, 185, 129, 0.15)', 
+                          color: '#34d399', 
+                          padding: '3px 10px', 
+                          borderRadius: '12px',
+                          border: '1px solid rgba(16, 185, 129, 0.3)',
+                          fontWeight: '600'
+                        }}>
+                          Scheduled
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ))}
