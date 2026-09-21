@@ -233,10 +233,23 @@ def ask_groq_structured_schema(prompt: str, system_prompt: str, schema_name: str
         elif res.status_code == 429:
             raise HTTPException(status_code=429, detail="Groq API rate limit error. Please try again in a few moments.")
         elif res.status_code == 400:
-            # Fallback to json_object if strict json_schema fails on specific model endpoint
             result = res.json() if res.text else {}
-            err_msg = result.get("error", {}).get("message", "Invalid request or model schema")
-            if "response_format" in err_msg.lower() or "schema" in err_msg.lower():
+            err_detail = result.get("error", {})
+            err_msg = err_detail.get("message", "Invalid request or model schema")
+            err_type = err_detail.get("type", "invalid_request_error")
+            failed_gen = err_detail.get("failed_generation", "")
+
+            # SAFE DIAGNOSTIC LOG (NO SECRETS EXPOSED)
+            print("\n================ [GROQ DIAGNOSTIC LOG] ================")
+            print(f"CONFIGURED MODEL : {selected_model}")
+            print(f"HTTP STATUS      : {res.status_code}")
+            print(f"ERROR TYPE       : {err_type}")
+            print(f"ERROR MESSAGE    : {err_msg}")
+            if failed_gen:
+                print(f"FAILED_GENERATION: {str(failed_gen)[:500]}")
+            print("=======================================================\n")
+
+            if "response_format" in err_msg.lower() or "schema" in err_msg.lower() or "json" in err_msg.lower():
                 return ask_groq_json_fallback(prompt, system_prompt)
             raise HTTPException(status_code=400, detail=f"Configured Groq model error: {err_msg}")
         elif res.status_code >= 500:
@@ -260,6 +273,7 @@ def ask_groq_structured_schema(prompt: str, system_prompt: str, schema_name: str
         raise HTTPException(status_code=500, detail=f"Groq AI service call failed: {str(e)}")
 
     return ask_groq_json_fallback(prompt, system_prompt)
+
 
 
 def ask_groq_json_fallback(prompt: str, system_prompt: str = None) -> dict:
@@ -348,31 +362,27 @@ CANONICAL_MEALS_SCHEMA = {
               "type": "object",
               "properties": {
                 "component_name": { "type": "string" },
-                "component_type": { "type": "string" },
                 "ingredients": {
                   "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "name": { "type": "string" },
-                      "quantity": { "type": "number" },
-                      "unit": { "type": "string" },
-                      "estimated_cost": { "type": "number" }
-                    },
-                    "required": ["name", "quantity", "unit", "estimated_cost"],
-                    "additionalProperties": False
-                  }
-                },
-                "preparation_steps": { "type": "array", "items": { "type": "string" } },
-                "cooking_steps": { "type": "array", "items": { "type": "string" } },
-                "cooking_time_minutes": { "type": "integer" }
+                  "items": { "type": "string" }
+                }
               },
-              "required": ["component_name", "component_type", "ingredients", "preparation_steps", "cooking_steps", "cooking_time_minutes"],
+              "required": ["component_name", "ingredients"],
               "additionalProperties": False
             }
           }
         },
-        "required": ["meal_type", "meal_name", "description", "estimated_cost", "calories", "protein_g", "carbohydrates_g", "fat_g", "components"],
+        "required": [
+          "meal_type",
+          "meal_name",
+          "description",
+          "estimated_cost",
+          "calories",
+          "protein_g",
+          "carbohydrates_g",
+          "fat_g",
+          "components"
+        ],
         "additionalProperties": False
       }
     }
@@ -395,19 +405,16 @@ CANONICAL_RECIPE_SCHEMA = {
           "name": { "type": "string" },
           "ingredients": {
             "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "name": { "type": "string" },
-                "quantity": { "type": "string" },
-                "unit": { "type": "string" }
-              },
-              "required": ["name", "quantity", "unit"],
-              "additionalProperties": False
-            }
+            "items": { "type": "string" }
           },
-          "preparation_steps": { "type": "array", "items": { "type": "string" } },
-          "cooking_steps": { "type": "array", "items": { "type": "string" } },
+          "preparation_steps": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "cooking_steps": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
           "cooking_time_minutes": { "type": "integer" }
         },
         "required": ["name", "ingredients", "preparation_steps", "cooking_steps", "cooking_time_minutes"],
@@ -416,22 +423,27 @@ CANONICAL_RECIPE_SCHEMA = {
     },
     "total_cooking_time_minutes": { "type": "integer" },
     "servings": { "type": "integer" },
-    "nutrition": {
-      "type": "object",
-      "properties": {
-        "calories": { "type": "integer" },
-        "protein_g": { "type": "number" },
-        "carbohydrates_g": { "type": "number" },
-        "fat_g": { "type": "number" }
-      },
-      "required": ["calories", "protein_g", "carbohydrates_g", "fat_g"],
-      "additionalProperties": False
-    },
+    "calories": { "type": "integer" },
+    "protein_g": { "type": "number" },
+    "carbohydrates_g": { "type": "number" },
+    "fat_g": { "type": "number" },
     "youtube_search_query": { "type": "string" }
   },
-  "required": ["meal_name", "description", "components", "total_cooking_time_minutes", "servings", "nutrition", "youtube_search_query"],
+  "required": [
+    "meal_name",
+    "description",
+    "components",
+    "total_cooking_time_minutes",
+    "servings",
+    "calories",
+    "protein_g",
+    "carbohydrates_g",
+    "fat_g",
+    "youtube_search_query"
+  ],
   "additionalProperties": False
 }
+
 
 
 # -----------------------------------
@@ -525,19 +537,36 @@ def generate_weekly_meal_plan(family, budget: str = "Medium") -> str:
 # MULTI-COMPONENT RECIPE GENERATOR
 # -----------------------------------
 def generate_recipe(meal_input: str, meal_type: str = "Breakfast", language: str = "English") -> dict:
-    clean_meal_name = str(meal_input or "").strip()
-    if not is_valid_dish_name(clean_meal_name):
-        clean_meal_name = "Egg Bhurji with Whole Wheat Toast"
+    clean_meal_name = ""
+    components_info = ""
+    
+    if isinstance(meal_input, str):
+        try:
+            parsed = json.loads(meal_input)
+            if isinstance(parsed, dict):
+                clean_meal_name = parsed.get("meal_name", "")
+                comps = parsed.get("components", [])
+                if comps:
+                    comp_names = [c.get("component_name", c.get("name", "")) for c in comps if isinstance(c, dict)]
+                    if comp_names:
+                        components_info = f" Components: {', '.join(comp_names)}."
+        except Exception:
+            clean_meal_name = meal_input.strip()
+
+    if not clean_meal_name or not is_valid_dish_name(clean_meal_name):
+        clean_meal_name = str(meal_input or "").strip()
+        if not is_valid_dish_name(clean_meal_name):
+            clean_meal_name = "Egg Bhurji with Whole Wheat Toast"
 
     system_prompt = (
         "You are a master Indian chef and culinary instructor. "
         "Generate a complete multi-component recipe in JSON format. "
         f"The recipe MUST be in language: {language}. "
-        "Every distinct component in the meal (e.g. 'Egg Bhurji' AND 'Whole Wheat Toast') MUST have its OWN complete ingredients, preparation_steps, and cooking_steps."
+        "Every distinct component in the meal MUST have its OWN complete ingredients, preparation_steps, and cooking_steps."
     )
 
     prompt = f"""
-Generate a complete, professional recipe for the multi-component meal: "{clean_meal_name}".
+Generate a complete, professional recipe for the multi-component meal: "{clean_meal_name}".{components_info}
 Meal Time: {meal_type}
 Target Language: {language}
 
@@ -556,6 +585,7 @@ INSTRUCTIONS:
         return data
 
     raise HTTPException(status_code=500, detail=f"Failed to generate structured recipe for '{clean_meal_name}'.")
+
 
 
 # -----------------------------------
@@ -585,10 +615,18 @@ def derive_grocery_from_meals(plans_list: list) -> str:
             
             for comp in components:
                 for ing in comp.get("ingredients", []):
-                    name = ing.get("name", "").strip().title()
-                    qty = float(ing.get("quantity", 1.0))
-                    unit = ing.get("unit", "pcs").strip().lower()
-                    cost = float(ing.get("estimated_cost", 0.0))
+                    if isinstance(ing, str):
+                        name = ing.strip().title()
+                        qty = 1.0
+                        unit = "pcs"
+                        cost = 10.0
+                    elif isinstance(ing, dict):
+                        name = ing.get("name", "").strip().title()
+                        qty = float(ing.get("quantity", 1.0))
+                        unit = ing.get("unit", "pcs").strip().lower()
+                        cost = float(ing.get("estimated_cost", 0.0))
+                    else:
+                        continue
 
                     if not name:
                         continue
@@ -612,6 +650,7 @@ def derive_grocery_from_meals(plans_list: list) -> str:
                         ingredient_totals[key] = {"qty": 0.0, "cost": 0.0}
                     ingredient_totals[key]["qty"] += qty
                     ingredient_totals[key]["cost"] += cost
+
 
         except Exception as e:
             print("Error parsing meal component for grocery derivation:", e)
