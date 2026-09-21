@@ -43,8 +43,7 @@ def grocery(id: int):
     finally:
         db.close()
 
-from datetime import datetime, timezone, timedelta
-from app.models import DailyPlan, CustomGroceryList
+from app.ai import generate_weekly_meal_plan, generate_weekly_grocery, derive_grocery_from_meals
 
 @router.post("/families/{id}/generate-grocery")
 def regenerate_grocery(id: int):
@@ -65,15 +64,9 @@ def regenerate_grocery(id: int):
         if not upcoming_plans:
             raise HTTPException(status_code=400, detail="No upcoming meal plans found to generate groceries for.")
 
-        combined_meal_text = ""
-        for p in upcoming_plans:
-            combined_meal_text += f"\n--- {p.date} ---\n{p.meal_type}: {p.plan_text}\n"
-
         db.query(CustomGroceryList).filter(CustomGroceryList.family_id == id).delete(synchronize_session=False)
 
-        new_grocery_text = generate_weekly_grocery(family, combined_meal_text)
-        if "GROQ ERROR" in new_grocery_text or "REQUEST ERROR" in new_grocery_text:
-            new_grocery_text = "Grocery list generated based on scheduled meals."
+        new_grocery_text = derive_grocery_from_meals(upcoming_plans)
 
         new_list = CustomGroceryList(
             family_id=id,

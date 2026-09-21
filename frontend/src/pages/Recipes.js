@@ -130,7 +130,7 @@ function Recipes() {
     }
 
     if (data && typeof data === "object") {
-      let rName = data.recipe_name || data.name || mealDescription || "Nutritious Recipe";
+      let rName = data.meal_name || data.recipe_name || data.name || mealDescription || "Nutritious Recipe";
       const genericNames = ["breakfast", "lunch", "dinner", "snack", "snacks", "nutritious healthy meal", "healthy meal"];
       if (genericNames.includes(String(rName).trim().toLowerCase())) {
         rName = (mealDescription && !genericNames.includes(String(mealDescription).trim().toLowerCase())) 
@@ -141,32 +141,49 @@ function Recipes() {
       const ytQuery = data.youtube_search_query || `${rName} recipe in ${selectedLanguage}`;
       const ytUrl = data.youtube_url || `https://www.youtube.com/results?search_query=${encodeURIComponent(ytQuery)}`;
 
-      const ingredients = Array.isArray(data.ingredients)
-        ? data.ingredients.map(ing => {
-            if (typeof ing === "object" && ing !== null) {
-              return {
-                name: ing.name || "Ingredient",
-                quantity: ing.quantity || "",
-                unit: ing.unit || ""
-              };
-            }
-            return { name: String(ing), quantity: "", unit: "" };
-          })
-        : [];
+      // Multi-component parsing
+      let components = [];
+      if (Array.isArray(data.components) && data.components.length > 0) {
+        components = data.components.map(comp => ({
+          name: comp.name || comp.component_name || "Main Component",
+          ingredients: Array.isArray(comp.ingredients) ? comp.ingredients.map(ing => ({
+            name: typeof ing === "object" ? ing.name || "Ingredient" : String(ing),
+            quantity: typeof ing === "object" ? ing.quantity || "" : "",
+            unit: typeof ing === "object" ? ing.unit || "" : ""
+          })) : [],
+          preparation_steps: Array.isArray(comp.preparation_steps) ? comp.preparation_steps : [],
+          cooking_steps: Array.isArray(comp.cooking_steps) ? comp.cooking_steps : [],
+          cooking_time_minutes: comp.cooking_time_minutes || 10
+        }));
+      } else {
+        // Fallback for single component
+        const ingredients = Array.isArray(data.ingredients)
+          ? data.ingredients.map(ing => {
+              if (typeof ing === "object" && ing !== null) {
+                return {
+                  name: ing.name || "Ingredient",
+                  quantity: ing.quantity || "",
+                  unit: ing.unit || ""
+                };
+              }
+              return { name: String(ing), quantity: "", unit: "" };
+            })
+          : [];
 
-      const prepSteps = Array.isArray(data.preparation_steps)
-        ? data.preparation_steps
-        : (data.preparation_steps ? [String(data.preparation_steps)] : []);
-
-      const cookSteps = Array.isArray(data.cooking_steps)
-        ? data.cooking_steps
-        : (data.cooking_steps ? [String(data.cooking_steps)] : []);
+        components = [{
+          name: rName,
+          ingredients,
+          preparation_steps: Array.isArray(data.preparation_steps) ? data.preparation_steps : [],
+          cooking_steps: Array.isArray(data.cooking_steps) ? data.cooking_steps : [],
+          cooking_time_minutes: data.cooking_time_minutes || 20
+        }];
+      }
 
       const nutrition = data.nutrition || {
-        calories: "250 kcal",
-        protein: "12g",
-        carbohydrates: "30g",
-        fat: "8g"
+        calories: 350,
+        protein_g: 15,
+        carbohydrates_g: 45,
+        fat_g: 10
       };
 
       return {
@@ -174,10 +191,8 @@ function Recipes() {
         meal_type: data.meal_type || selectedMealType,
         description: data.description || "",
         servings: data.servings || 2,
-        cooking_time_minutes: data.cooking_time_minutes || 25,
-        ingredients,
-        preparation_steps: prepSteps,
-        cooking_steps: cookSteps,
+        total_cooking_time_minutes: data.total_cooking_time_minutes || data.cooking_time_minutes || 25,
+        components,
         nutrition,
         youtube_url: ytUrl,
         youtube_search_query: ytQuery
@@ -303,7 +318,7 @@ function Recipes() {
         <div id="generated-recipe-section" style={{ marginTop: "30px", display: "flex", flexDirection: "column", gap: "30px" }}>
           {(() => {
             const r = parsedRecipe;
-            const imagePrompt = `Photorealistic delicious finished dish of ${r.recipe_name}, professional culinary food photography, bright lighting, appetizing 8k`;
+            const imagePrompt = `Photorealistic delicious finished meal of ${r.recipe_name}, professional food photography, bright lighting, 8k resolution`;
 
             return (
               <div className="anim-fade-in" style={{ display: "flex", flexDirection: "column", gap: "25px" }}>
@@ -339,7 +354,7 @@ function Recipes() {
                       {/* Stat Badges */}
                       <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", marginTop: "5px" }}>
                         <div style={{ background: "rgba(56, 189, 248, 0.12)", border: "1px solid rgba(56, 189, 248, 0.3)", padding: "6px 14px", borderRadius: "12px", color: "#38bdf8", fontSize: "0.9rem", fontWeight: "600" }}>
-                          ⏱️ Cooking Time: {r.cooking_time_minutes} mins
+                          ⏱️ Cooking Time: {r.total_cooking_time_minutes} mins
                         </div>
                         <div style={{ background: "rgba(16, 185, 129, 0.12)", border: "1px solid rgba(16, 185, 129, 0.3)", padding: "6px 14px", borderRadius: "12px", color: "#34d399", fontSize: "0.9rem", fontWeight: "600" }}>
                           👨‍👩‍👧 Servings: {r.servings}
@@ -366,8 +381,7 @@ function Recipes() {
                               borderRadius: "12px", 
                               textDecoration: "none", 
                               fontWeight: "bold", 
-                              boxShadow: "0 6px 20px rgba(239, 68, 68, 0.35)",
-                              transition: "transform 0.2s ease"
+                              boxShadow: "0 6px 20px rgba(239, 68, 68, 0.35)"
                             }}
                           >
                             ▶ Watch Video Tutorial on YouTube
@@ -378,128 +392,119 @@ function Recipes() {
                   </div>
                 </div>
 
-                {/* Grid for Ingredients & Preparation */}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: "25px" }}>
-                  
-                  {/* Ingredients Section */}
-                  {r.ingredients.length > 0 && (
-                    <div className="card daily-plan-card" style={{ padding: "25px" }}>
-                      <h3 style={{ color: "#f59e0b", marginTop: 0, marginBottom: "18px", fontSize: "1.25rem", display: "flex", alignItems: "center", gap: "10px" }}>
-                        🌿 Measure & Prepare Ingredients
-                      </h3>
-                      <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                        {r.ingredients.map((ing, iIdx) => {
-                          const ingId = `recipe-ing-${iIdx}`;
-                          const isChecked = !!checkedIngredients[ingId];
-
-                          return (
-                            <div 
-                              key={iIdx}
-                              className={`grocery-item-row ${isChecked ? 'checked' : ''}`}
-                              onClick={() => toggleIngredient(ingId)}
-                              style={{ cursor: "pointer", margin: 0 }}
-                            >
-                              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                                <input 
-                                  type="checkbox" 
-                                  checked={isChecked} 
-                                  onChange={() => {}} 
-                                  className="custom-checkbox"
-                                />
-                                <span className="item-name" style={{ color: isChecked ? "#64748b" : "#f8fafc", fontWeight: "500" }}>
-                                  {ing.quantity && <strong style={{ color: "#f59e0b", marginRight: "4px" }}>{ing.quantity} {ing.unit}</strong>} {ing.name}
-                                </span>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Preparation Steps */}
-                  {r.preparation_steps.length > 0 && (
-                    <div className="card daily-plan-card" style={{ padding: "25px" }}>
-                      <h3 style={{ color: "#38bdf8", marginTop: 0, marginBottom: "18px", fontSize: "1.25rem", display: "flex", alignItems: "center", gap: "10px" }}>
-                        🔪 Chef's Preparation Guide
-                      </h3>
-                      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                        {r.preparation_steps.map((pStep, pIdx) => (
-                          <div key={pIdx} style={{ display: "flex", gap: "12px", background: "rgba(14, 165, 233, 0.06)", borderLeft: "3px solid #38bdf8", padding: "12px 16px", borderRadius: "0 10px 10px 0" }}>
-                            <strong style={{ color: "#38bdf8", minWidth: "24px" }}>{pIdx + 1}.</strong>
-                            <span style={{ color: "#e2e8f0", lineHeight: "1.5" }}>{pStep}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Step-by-Step Cooking Instructions */}
-                {r.cooking_steps.length > 0 && (
-                  <div className="card daily-plan-card" style={{ padding: "30px" }}>
-                    <h3 style={{ color: "#38bdf8", marginTop: 0, marginBottom: "25px", fontSize: "1.35rem", display: "flex", alignItems: "center", gap: "10px" }}>
-                      🔥 Step-By-Step Cooking Guide
+                {/* Multi-Component Recipe Cards */}
+                {r.components.map((comp, cIdx) => (
+                  <div key={cIdx} className="card daily-plan-card" style={{ padding: "25px", borderTop: "4px solid #38bdf8" }}>
+                    <h3 style={{ color: "#38bdf8", marginTop: 0, marginBottom: "20px", fontSize: "1.4rem" }}>
+                      Component {cIdx + 1}: {comp.name}
                     </h3>
-                    <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
-                      {r.cooking_steps.map((cStep, sIdx) => {
-                        const stepId = `recipe-step-${sIdx}`;
-                        const isDone = !!completedSteps[stepId];
 
-                        return (
-                          <div 
-                            key={sIdx}
-                            onClick={() => toggleStep(stepId)}
-                            style={{
-                              background: isDone ? "rgba(16, 185, 129, 0.08)" : "linear-gradient(135deg, rgba(30, 41, 59, 0.7), rgba(15, 23, 42, 0.7))",
-                              border: isDone ? "1px solid rgba(16, 185, 129, 0.3)" : "1px solid rgba(255, 255, 255, 0.06)",
-                              borderLeft: isDone ? "5px solid #10b981" : "5px solid #3b82f6",
-                              borderRadius: "14px",
-                              padding: "20px 24px",
-                              cursor: "pointer",
-                              transition: "all 0.3s ease"
-                            }}
-                          >
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                              <strong style={{ color: isDone ? "#34d399" : "#3b82f6", fontSize: "1.1rem", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                                {isDone ? `✓ STEP ${sIdx + 1} COMPLETED` : `STEP ${sIdx + 1}`}
-                              </strong>
-                              <span style={{ fontSize: "0.8em", color: isDone ? "#34d399" : "#64748b", background: isDone ? "rgba(16,185,129,0.15)" : "rgba(51, 65, 85, 0.4)", padding: "3px 10px", borderRadius: "10px" }}>
-                                {isDone ? "Done" : "Tap to complete"}
-                              </span>
-                            </div>
-                            <p style={{ margin: 0, color: isDone ? "#94a3b8" : "#f8fafc", fontSize: "1.08rem", lineHeight: "1.6", textDecoration: isDone ? "line-through" : "none" }}>
-                              {cStep}
-                            </p>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "20px" }}>
+                      
+                      {/* Component Ingredients */}
+                      {comp.ingredients && comp.ingredients.length > 0 && (
+                        <div>
+                          <h4 style={{ color: "#f59e0b", marginBottom: "12px" }}>🌿 Ingredients</h4>
+                          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                            {comp.ingredients.map((ing, iIdx) => {
+                              const ingId = `comp-${cIdx}-ing-${iIdx}`;
+                              const isChecked = !!checkedIngredients[ingId];
+
+                              return (
+                                <div 
+                                  key={iIdx}
+                                  className={`grocery-item-row ${isChecked ? 'checked' : ''}`}
+                                  onClick={() => toggleIngredient(ingId)}
+                                  style={{ cursor: "pointer", margin: 0 }}
+                                >
+                                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                                    <input type="checkbox" checked={isChecked} onChange={() => {}} className="custom-checkbox" />
+                                    <span style={{ color: isChecked ? "#64748b" : "#f8fafc" }}>
+                                      {ing.quantity && <strong style={{ color: "#f59e0b", marginRight: "4px" }}>{ing.quantity} {ing.unit}</strong>} {ing.name}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
+                        </div>
+                      )}
 
-                {/* Nutrition Card */}
+                      {/* Component Prep Steps */}
+                      {comp.preparation_steps && comp.preparation_steps.length > 0 && (
+                        <div>
+                          <h4 style={{ color: "#34d399", marginBottom: "12px" }}>🔪 Preparation Steps</h4>
+                          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                            {comp.preparation_steps.map((prep, pIdx) => (
+                              <div key={pIdx} style={{ background: "rgba(16, 185, 129, 0.08)", borderLeft: "3px solid #10b981", padding: "10px 14px", borderRadius: "0 8px 8px 0", color: "#e2e8f0" }}>
+                                <strong style={{ color: "#34d399", marginRight: "6px" }}>{pIdx + 1}.</strong> {prep}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                    </div>
+
+                    {/* Component Cooking Steps */}
+                    {comp.cooking_steps && comp.cooking_steps.length > 0 && (
+                      <div style={{ marginTop: "25px" }}>
+                        <h4 style={{ color: "#38bdf8", marginBottom: "15px" }}>🔥 Cooking Steps</h4>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                          {comp.cooking_steps.map((step, sIdx) => {
+                            const stepId = `comp-${cIdx}-step-${sIdx}`;
+                            const isDone = !!completedSteps[stepId];
+
+                            return (
+                              <div 
+                                key={sIdx}
+                                onClick={() => toggleStep(stepId)}
+                                style={{
+                                  background: isDone ? "rgba(16, 185, 129, 0.08)" : "rgba(30, 41, 59, 0.7)",
+                                  borderLeft: isDone ? "5px solid #10b981" : "5px solid #3b82f6",
+                                  borderRadius: "10px",
+                                  padding: "16px 20px",
+                                  cursor: "pointer"
+                                }}
+                              >
+                                <strong style={{ color: isDone ? "#34d399" : "#3b82f6", display: "block", marginBottom: "4px" }}>
+                                  {isDone ? `✓ STEP ${sIdx + 1} DONE` : `STEP ${sIdx + 1}`}
+                                </strong>
+                                <p style={{ margin: 0, color: isDone ? "#64748b" : "#f8fafc", lineHeight: "1.5", textDecoration: isDone ? "line-through" : "none" }}>
+                                  {step}
+                                </p>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                  </div>
+                ))}
+
+                {/* Overall Nutrition Card */}
                 {r.nutrition && (
                   <div className="card daily-plan-card" style={{ padding: "25px", borderTop: "4px solid #a855f7" }}>
-                    <h3 style={{ color: "#c084fc", marginTop: 0, marginBottom: "20px", fontSize: "1.25rem", display: "flex", alignItems: "center", gap: "10px" }}>
-                      📊 Nutritional Values (per serving)
+                    <h3 style={{ color: "#c084fc", marginTop: 0, marginBottom: "20px", fontSize: "1.25rem" }}>
+                      📊 Total Meal Nutrition (per serving)
                     </h3>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "15px" }}>
                       <div style={{ background: "rgba(168, 85, 247, 0.1)", border: "1px solid rgba(168, 85, 247, 0.3)", padding: "16px", borderRadius: "12px", textAlign: "center" }}>
                         <div style={{ color: "#94a3b8", fontSize: "0.85rem", textTransform: "uppercase", fontWeight: "600" }}>Calories</div>
-                        <div style={{ color: "#c084fc", fontSize: "1.3rem", fontWeight: "700", marginTop: "4px" }}>{r.nutrition.calories || "N/A"}</div>
+                        <div style={{ color: "#c084fc", fontSize: "1.3rem", fontWeight: "700", marginTop: "4px" }}>{r.nutrition.calories || 0} kcal</div>
                       </div>
                       <div style={{ background: "rgba(56, 189, 248, 0.1)", border: "1px solid rgba(56, 189, 248, 0.3)", padding: "16px", borderRadius: "12px", textAlign: "center" }}>
                         <div style={{ color: "#94a3b8", fontSize: "0.85rem", textTransform: "uppercase", fontWeight: "600" }}>Protein</div>
-                        <div style={{ color: "#38bdf8", fontSize: "1.3rem", fontWeight: "700", marginTop: "4px" }}>{r.nutrition.protein || "N/A"}</div>
+                        <div style={{ color: "#38bdf8", fontSize: "1.3rem", fontWeight: "700", marginTop: "4px" }}>{r.nutrition.protein_g || r.nutrition.protein || 0}g</div>
                       </div>
                       <div style={{ background: "rgba(245, 158, 11, 0.1)", border: "1px solid rgba(245, 158, 11, 0.3)", padding: "16px", borderRadius: "12px", textAlign: "center" }}>
                         <div style={{ color: "#94a3b8", fontSize: "0.85rem", textTransform: "uppercase", fontWeight: "600" }}>Carbs</div>
-                        <div style={{ color: "#f59e0b", fontSize: "1.3rem", fontWeight: "700", marginTop: "4px" }}>{r.nutrition.carbohydrates || "N/A"}</div>
+                        <div style={{ color: "#f59e0b", fontSize: "1.3rem", fontWeight: "700", marginTop: "4px" }}>{r.nutrition.carbohydrates_g || r.nutrition.carbohydrates || 0}g</div>
                       </div>
                       <div style={{ background: "rgba(239, 68, 68, 0.1)", border: "1px solid rgba(239, 68, 68, 0.3)", padding: "16px", borderRadius: "12px", textAlign: "center" }}>
                         <div style={{ color: "#94a3b8", fontSize: "0.85rem", textTransform: "uppercase", fontWeight: "600" }}>Fat</div>
-                        <div style={{ color: "#fca5a5", fontSize: "1.3rem", fontWeight: "700", marginTop: "4px" }}>{r.nutrition.fat || "N/A"}</div>
+                        <div style={{ color: "#fca5a5", fontSize: "1.3rem", fontWeight: "700", marginTop: "4px" }}>{r.nutrition.fat_g || r.nutrition.fat || 0}g</div>
                       </div>
                     </div>
                   </div>
@@ -515,3 +520,4 @@ function Recipes() {
 }
 
 export default Recipes;
+

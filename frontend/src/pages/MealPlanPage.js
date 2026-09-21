@@ -140,16 +140,25 @@ function MealPlanPage() {
 
   const parseMealDetails = (planText) => {
     if (!planText) {
-      return { name: "Indian Home Meal", description: "", ingredients: [], calories: 0 };
+      return { meal_name: "Indian Home Meal", description: "", components: [], estimated_cost: 0, calories: 0, protein_g: 0, carbohydrates_g: 0, fat_g: 0 };
     }
     try {
       const parsed = typeof planText === 'string' ? JSON.parse(planText) : planText;
-      if (parsed && typeof parsed === 'object' && parsed.name) {
+      if (parsed && typeof parsed === 'object') {
+        const mealName = parsed.meal_name || parsed.name || "Indian Meal";
+        const comps = Array.isArray(parsed.components)
+          ? parsed.components
+          : (Array.isArray(parsed.ingredients) ? [{ component_name: "Main Dish", ingredients: parsed.ingredients }] : []);
+
         return {
-          name: parsed.name,
+          meal_name: mealName,
           description: parsed.description || "",
-          ingredients: Array.isArray(parsed.ingredients) ? parsed.ingredients : [],
-          calories: parsed.calories || 0
+          components: comps,
+          estimated_cost: parsed.estimated_cost || 0,
+          calories: parsed.calories || 0,
+          protein_g: parsed.protein_g || 0,
+          carbohydrates_g: parsed.carbohydrates_g || 0,
+          fat_g: parsed.fat_g || 0
         };
       }
     } catch (e) {
@@ -160,10 +169,14 @@ function MealPlanPage() {
     let firstLine = lines[0] || planText;
     firstLine = firstLine.replace(/^[\-\*\•]\s*/, '').replace(/^["']|["']$/g, '');
     return {
-      name: firstLine,
+      meal_name: firstLine,
       description: lines.slice(1).join(' '),
-      ingredients: [],
-      calories: 0
+      components: [],
+      estimated_cost: 0,
+      calories: 0,
+      protein_g: 0,
+      carbohydrates_g: 0,
+      fat_g: 0
     };
   };
 
@@ -237,7 +250,7 @@ function MealPlanPage() {
         </div>
 
         <div>
-          <h3 style={{ margin: "10px 0", color: "#94a3b8" }}>Set Budget:</h3>
+          <h3 style={{ margin: "10px 0", color: "#94a3b8" }}>Set Budget Level:</h3>
           <div style={{ display: 'flex', gap: '10px' }}>
             {["Low", "Medium", "High"].map(b => (
               <label key={b} style={{ color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", gap: "5px" }}>
@@ -300,7 +313,7 @@ function MealPlanPage() {
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
                           <h3 className="meal-type-title" style={{ margin: 0, borderBottom: 'none', paddingBottom: 0 }}>
                             <span style={{ fontSize: '1.2em', marginRight: '6px' }}>{mealIcon}</span>
-                            {plan.meal_type}
+                            {plan.meal_type.toUpperCase()}
                           </h3>
                           <button 
                             onClick={() => deleteMealPlan(plan.id)}
@@ -318,85 +331,86 @@ function MealPlanPage() {
                               boxShadow: 'none',
                               transition: 'all 0.2s ease'
                             }}
-                            onMouseOver={(e) => {
-                              e.currentTarget.style.background = '#ef4444';
-                              e.currentTarget.style.color = '#ffffff';
-                            }}
-                            onMouseOut={(e) => {
-                              e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)';
-                              e.currentTarget.style.color = '#ef4444';
-                            }}
                           >
                             Delete
                           </button>
                         </div>
 
-                        {/* Structured Dish Name */}
+                        {/* Structured Meal Card */}
                         <div 
                           style={{
                             background: 'linear-gradient(135deg, rgba(14, 165, 233, 0.12), rgba(59, 130, 246, 0.06))',
                             border: '1px solid rgba(56, 189, 248, 0.25)',
                             borderRadius: '12px',
-                            padding: '14px 16px',
+                            padding: '16px',
                             display: 'flex',
                             flexDirection: 'column',
-                            gap: '8px',
+                            gap: '10px',
                             boxShadow: '0 4px 12px rgba(0, 0, 0, 0.2)'
                           }}
                         >
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                             <span style={{ 
                               color: '#f8fafc', 
                               fontWeight: '700', 
-                              fontSize: '1.1rem', 
+                              fontSize: '1.15rem', 
                               letterSpacing: '0.3px',
                               lineHeight: '1.4'
                             }}>
-                              ✨ {mealDetails.name}
+                              ✨ {mealDetails.meal_name}
                             </span>
-                            {mealDetails.calories > 0 && (
-                              <span style={{
-                                background: 'rgba(245, 158, 11, 0.18)',
-                                color: '#fbbf24',
-                                border: '1px solid rgba(245, 158, 11, 0.3)',
-                                fontSize: '0.75rem',
-                                fontWeight: '700',
-                                padding: '3px 9px',
-                                borderRadius: '10px'
-                              }}>
-                                🔥 {mealDetails.calories} kcal
-                              </span>
-                            )}
                           </div>
 
                           {/* Meal Description */}
                           {mealDetails.description && (
-                            <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.88rem', lineHeight: '1.4' }}>
+                            <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.9rem', lineHeight: '1.5' }}>
                               {mealDetails.description}
                             </p>
                           )}
 
-                          {/* Ingredients List */}
-                          {mealDetails.ingredients && mealDetails.ingredients.length > 0 && (
-                            <div style={{ marginTop: '6px', display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                              {mealDetails.ingredients.map((ing, ingIdx) => (
-                                <span 
-                                  key={ingIdx}
-                                  style={{
-                                    background: '#1e293b',
-                                    color: '#38bdf8',
-                                    border: '1px solid rgba(56, 189, 248, 0.2)',
-                                    fontSize: '0.72rem',
-                                    padding: '2px 8px',
-                                    borderRadius: '6px',
-                                    fontWeight: '500'
-                                  }}
-                                >
-                                  {ing}
-                                </span>
-                              ))}
+                          {/* Components List */}
+                          {mealDetails.components && mealDetails.components.length > 0 && (
+                            <div style={{ marginTop: '5px' }}>
+                              <strong style={{ color: '#38bdf8', fontSize: '0.85rem', textTransform: 'uppercase' }}>Components:</strong>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
+                                {mealDetails.components.map((comp, cIdx) => (
+                                  <span 
+                                    key={cIdx}
+                                    style={{
+                                      background: '#1e293b',
+                                      color: '#f8fafc',
+                                      border: '1px solid rgba(56, 189, 248, 0.3)',
+                                      fontSize: '0.78rem',
+                                      padding: '3px 10px',
+                                      borderRadius: '8px',
+                                      fontWeight: '600'
+                                    }}
+                                  >
+                                    • {comp.component_name || comp.name || `Component ${cIdx+1}`}
+                                  </span>
+                                ))}
+                              </div>
                             </div>
                           )}
+
+                          {/* Macros & Cost Badges */}
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px' }}>
+                            {mealDetails.estimated_cost > 0 && (
+                              <span style={{ background: 'rgba(16, 185, 129, 0.18)', color: '#34d399', border: '1px solid rgba(16, 185, 129, 0.3)', fontSize: '0.78rem', fontWeight: '700', padding: '3px 9px', borderRadius: '8px' }}>
+                                ₹{mealDetails.estimated_cost}
+                              </span>
+                            )}
+                            {mealDetails.calories > 0 && (
+                              <span style={{ background: 'rgba(245, 158, 11, 0.18)', color: '#fbbf24', border: '1px solid rgba(245, 158, 11, 0.3)', fontSize: '0.78rem', fontWeight: '700', padding: '3px 9px', borderRadius: '8px' }}>
+                                🔥 {mealDetails.calories} kcal
+                              </span>
+                            )}
+                            {mealDetails.protein_g > 0 && (
+                              <span style={{ background: 'rgba(56, 189, 248, 0.18)', color: '#38bdf8', border: '1px solid rgba(56, 189, 248, 0.3)', fontSize: '0.78rem', fontWeight: '700', padding: '3px 9px', borderRadius: '8px' }}>
+                                🥩 {mealDetails.protein_g}g protein
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
 

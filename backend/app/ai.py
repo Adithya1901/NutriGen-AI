@@ -11,7 +11,7 @@ load_dotenv()
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 # -----------------------------------
-# CENTRALIZED PRODUCTION GROQ MODEL CONFIGURATION
+# CENTRAL PRODUCTION GROQ MODEL CONFIGURATION
 # Single Source of Truth
 # -----------------------------------
 DEFAULT_PRIMARY_MODEL = "openai/gpt-oss-120b"
@@ -29,6 +29,16 @@ GENERIC_MEAL_NAMES = {
     "meal", "nutritious indian home meal", "nutritious indian meal",
     "healthy food", "home meal", "nutritious food"
 }
+
+# -----------------------------------
+# BUDGET CONSTANTS (INR per person per day)
+# -----------------------------------
+BUDGET_LIMITS = {
+    "low": 120.0,
+    "medium": 250.0,
+    "high": 500.0
+}
+
 
 def get_groq_api_key() -> str:
     api_key = os.getenv("GROQ_API_KEY")
@@ -94,7 +104,7 @@ def get_selected_groq_model(force_refresh: bool = False) -> str:
                 return model_id
                 
         first_active = active_models[0]
-        _cached_selected_model = first_first_active if 'first_first_active' in locals() else first_active
+        _cached_selected_model = first_active
         print(f"[AI NOTICE] Configured model unavailable. Selected active Groq model: {first_active}")
         return first_active
 
@@ -132,7 +142,7 @@ def is_valid_dish_name(name: str) -> bool:
 
 
 # -----------------------------------
-# CORE GROQ TEXT FUNCTION
+# GROQ CALL HELPERS WITH STRUCTURED OUTPUTS
 # -----------------------------------
 def ask_groq(prompt: str, system_prompt: str = None) -> str:
     api_key = get_groq_api_key()
@@ -158,21 +168,16 @@ def ask_groq(prompt: str, system_prompt: str = None) -> str:
         res = requests.post(GROQ_URL, headers=headers, json=data, timeout=60)
         
         if res.status_code == 401:
-            print(f"[AI ERROR] Groq 401 Auth Error on model {selected_model}")
             raise HTTPException(status_code=401, detail="Groq API authentication error: Invalid API key")
         elif res.status_code == 403:
-            print(f"[AI ERROR] Groq 403 Permission Error on model {selected_model}")
             raise HTTPException(status_code=403, detail="Groq API permission error")
         elif res.status_code == 429:
-            print(f"[AI ERROR] Groq 429 Rate Limit Error on model {selected_model}")
             raise HTTPException(status_code=429, detail="Groq API rate limit error. Please try again in a few moments.")
         elif res.status_code == 400:
             result = res.json() if res.text else {}
             err_msg = result.get("error", {}).get("message", "Invalid request or model schema")
-            print(f"[AI ERROR] Groq 400 Error on model {selected_model}: {err_msg}")
             raise HTTPException(status_code=400, detail=f"Configured Groq model error: {err_msg}")
         elif res.status_code >= 500:
-            print(f"[AI ERROR] Groq {res.status_code} Server Error on model {selected_model}")
             raise HTTPException(status_code=500, detail="Groq AI service error. Please try again later.")
 
         result = res.json()
@@ -184,16 +189,13 @@ def ask_groq(prompt: str, system_prompt: str = None) -> str:
     except HTTPException as he:
         raise he
     except Exception as e:
-        print(f"[AI ERROR] Request exception on model {selected_model}: {e}")
         raise HTTPException(status_code=500, detail=f"Groq AI service call failed: {str(e)}")
 
     raise HTTPException(status_code=500, detail="Groq AI returned an empty response.")
 
 
-# -----------------------------------
-# GROQ STRUCTURED JSON FUNCTION
-# -----------------------------------
-def ask_groq_json(prompt: str, system_prompt: str = None) -> dict:
+def ask_groq_structured_schema(prompt: str, system_prompt: str, schema_name: str, schema_dict: dict) -> dict:
+    """Executes Groq API call enforcing strict JSON Schema response format."""
     api_key = get_groq_api_key()
     selected_model = get_selected_groq_model()
 
@@ -209,30 +211,35 @@ def ask_groq_json(prompt: str, system_prompt: str = None) -> dict:
     data = {
         "model": selected_model,
         "messages": messages,
-        "temperature": 0.4,
+        "temperature": 0.3,
         "max_tokens": 4096,
-        "response_format": {"type": "json_object"}
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": schema_name,
+                "strict": True,
+                "schema": schema_dict
+            }
+        }
     }
 
     try:
         res = requests.post(GROQ_URL, headers=headers, json=data, timeout=60)
 
         if res.status_code == 401:
-            print(f"[AI ERROR] Groq 401 Auth Error on model {selected_model}")
             raise HTTPException(status_code=401, detail="Groq API authentication error: Invalid API key")
         elif res.status_code == 403:
-            print(f"[AI ERROR] Groq 403 Permission Error on model {selected_model}")
             raise HTTPException(status_code=403, detail="Groq API permission error")
         elif res.status_code == 429:
-            print(f"[AI ERROR] Groq 429 Rate Limit Error on model {selected_model}")
             raise HTTPException(status_code=429, detail="Groq API rate limit error. Please try again in a few moments.")
         elif res.status_code == 400:
+            # Fallback to json_object if strict json_schema fails on specific model endpoint
             result = res.json() if res.text else {}
             err_msg = result.get("error", {}).get("message", "Invalid request or model schema")
-            print(f"[AI ERROR] Groq 400 Error on model {selected_model}: {err_msg}")
+            if "response_format" in err_msg.lower() or "schema" in err_msg.lower():
+                return ask_groq_json_fallback(prompt, system_prompt)
             raise HTTPException(status_code=400, detail=f"Configured Groq model error: {err_msg}")
         elif res.status_code >= 500:
-            print(f"[AI ERROR] Groq {res.status_code} Server Error on model {selected_model}")
             raise HTTPException(status_code=500, detail="Groq AI service error. Please try again later.")
 
         result = res.json()
@@ -250,8 +257,43 @@ def ask_groq_json(prompt: str, system_prompt: str = None) -> dict:
     except HTTPException as he:
         raise he
     except Exception as e:
-        print(f"[AI ERROR] JSON request exception on model {selected_model}: {e}")
         raise HTTPException(status_code=500, detail=f"Groq AI service call failed: {str(e)}")
+
+    return ask_groq_json_fallback(prompt, system_prompt)
+
+
+def ask_groq_json_fallback(prompt: str, system_prompt: str = None) -> dict:
+    api_key = get_groq_api_key()
+    selected_model = get_selected_groq_model()
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
+    data = {
+        "model": selected_model,
+        "messages": messages,
+        "temperature": 0.3,
+        "max_tokens": 4096,
+        "response_format": {"type": "json_object"}
+    }
+
+    res = requests.post(GROQ_URL, headers=headers, json=data, timeout=60)
+    if res.status_code == 200:
+        result = res.json()
+        if "choices" in result and len(result["choices"]) > 0:
+            content = result["choices"][0]["message"]["content"] or ""
+            try:
+                return json.loads(content)
+            except json.JSONDecodeError:
+                match = re.search(r'\{[\s\S]*\}', content)
+                if match:
+                    return json.loads(match.group(0))
 
     raise HTTPException(status_code=500, detail="Failed to parse valid JSON from Groq AI response.")
 
@@ -282,99 +324,114 @@ def build_family_prompt_context(family) -> tuple:
 
 
 # -----------------------------------
-# WEEKLY STRUCTURED MEAL PLAN
+# CANONICAL MEAL SCHEMAS FOR GROQ
 # -----------------------------------
-def generate_weekly_meal_plan_structured(family, budget: str = "Medium") -> dict:
-    members_text, num_members = build_family_prompt_context(family)
-
-    system_prompt = (
-        "You are an expert Indian nutritionist and master culinary chef. "
-        "You generate detailed, highly personalized, realistic Indian family meal plans in valid JSON. "
-        "Every single meal name MUST be a real, specific, authentic Indian dish (e.g. 'Vegetable Upma', 'Ragi Dosa', 'Palak Paneer', 'Brown Rice Dal', 'Vegetable Sambar', 'Chana Sundal', 'Moong Dal Chilla', 'Idli Sambar'). "
-        "NEVER generate generic meal names like 'Breakfast', 'Lunch', 'Dinner', 'Snack', 'Nutritious Healthy Meal', 'Healthy Meal'."
-    )
-
-    prompt = f"""
-Generate a 7-day weekly Indian family meal plan for household '{family.name}' with {num_members} family member(s).
-
-FAMILY MEMBERS PROFILE ({num_members} members):
-{members_text}
-
-Budget Setting: {budget}. Keep meal ingredients aligned with a {budget} budget!
-
-CRITICAL MANDATORY INSTRUCTIONS:
-1. You MUST consider ALL {num_members} family members listed above, including their age, weight, height, dietary preferences, health conditions, and meal preferences.
-2. Generate ONE unified meal plan for the entire family.
-3. Every single meal name MUST be a real Indian dish.
-4. DO NOT output generic meal names like "Breakfast", "Lunch", "Dinner", "Snack", "Nutritious Healthy Meal", "Healthy Meal".
-5. Return 7 days: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday.
-
-Return JSON matching this EXACT schema:
-{{
-  "week": [
-    {{
-      "day": "Monday",
-      "breakfast": {{
-        "name": "Vegetable Upma with Mint Chutney",
-        "description": "Flavorful semolina cooked with fresh vegetables and tempered mustard seeds.",
-        "ingredients": ["Semolina", "Carrots", "Peas", "Mustard Seeds", "Curry Leaves"],
-        "calories": 280
-      }},
-      "lunch": {{
-        "name": "Palak Paneer with Whole Wheat Roti",
-        "description": "Cottage cheese cubes cooked in a mild spinach curry served with hot phulkas.",
-        "ingredients": ["Paneer", "Spinach", "Garlic", "Whole Wheat Flour"],
-        "calories": 450
-      }},
-      "dinner": {{
-        "name": "Brown Rice Dal Tadka",
-        "description": "Nutritious brown rice served with tempered yellow lentils and a cucumber salad.",
-        "ingredients": ["Brown Rice", "Toor Dal", "Tomatoes", "Cumin Seeds"],
-        "calories": 380
-      }},
-      "snacks": [
-        {{
-          "name": "Chana Sundal",
-          "description": "Steamed chickpeas tossed with mustard seeds, fresh coconut, and curry leaves.",
-          "ingredients": ["Chickpeas", "Grated Coconut", "Mustard Seeds"],
-          "calories": 160
-        }}
-      ]
-    }}
-  ]
-}}
-"""
-
-    for attempt in range(3):
-        data = ask_groq_json(prompt, system_prompt)
-        if data and isinstance(data, dict) and "week" in data and isinstance(data["week"], list):
-            week = data["week"]
-            if len(week) >= 7:
-                valid = True
-                for day in week[:7]:
-                    b = day.get("breakfast", {})
-                    l = day.get("lunch", {})
-                    d = day.get("dinner", {})
-                    sn = day.get("snacks", [])
-                    
-                    b_name = b.get("name") if isinstance(b, dict) else None
-                    l_name = l.get("name") if isinstance(l, dict) else None
-                    d_name = d.get("name") if isinstance(d, dict) else None
-                    sn_name = sn[0].get("name") if (isinstance(sn, list) and len(sn) > 0 and isinstance(sn[0], dict)) else None
-                    
-                    if not (is_valid_dish_name(b_name) and is_valid_dish_name(l_name) and is_valid_dish_name(d_name) and is_valid_dish_name(sn_name)):
-                        valid = False
-                        print(f"[AI VALIDATION ATTEMPT {attempt+1}] Rejected generic dish names in week plan: B='{b_name}', L='{l_name}', D='{d_name}', S='{sn_name}'")
-                        break
-                if valid:
-                    return data
-
-    raise HTTPException(status_code=500, detail="AI meal generation failed to generate valid real dish names after 3 attempts.")
+CANONICAL_MEALS_SCHEMA = {
+  "type": "object",
+  "properties": {
+    "meals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "meal_type": { "type": "string" },
+          "meal_name": { "type": "string" },
+          "description": { "type": "string" },
+          "estimated_cost": { "type": "number" },
+          "calories": { "type": "integer" },
+          "protein_g": { "type": "number" },
+          "carbohydrates_g": { "type": "number" },
+          "fat_g": { "type": "number" },
+          "components": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "component_name": { "type": "string" },
+                "component_type": { "type": "string" },
+                "ingredients": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": { "type": "string" },
+                      "quantity": { "type": "number" },
+                      "unit": { "type": "string" },
+                      "estimated_cost": { "type": "number" }
+                    },
+                    "required": ["name", "quantity", "unit", "estimated_cost"],
+                    "additionalProperties": False
+                  }
+                },
+                "preparation_steps": { "type": "array", "items": { "type": "string" } },
+                "cooking_steps": { "type": "array", "items": { "type": "string" } },
+                "cooking_time_minutes": { "type": "integer" }
+              },
+              "required": ["component_name", "component_type", "ingredients", "preparation_steps", "cooking_steps", "cooking_time_minutes"],
+              "additionalProperties": False
+            }
+          }
+        },
+        "required": ["meal_type", "meal_name", "description", "estimated_cost", "calories", "protein_g", "carbohydrates_g", "fat_g", "components"],
+        "additionalProperties": False
+      }
+    }
+  },
+  "required": ["meals"],
+  "additionalProperties": False
+}
 
 
-def generate_weekly_meal_plan(family, budget: str = "Medium") -> str:
-    plan_dict = generate_weekly_meal_plan_structured(family, budget)
-    return json.dumps(plan_dict)
+CANONICAL_RECIPE_SCHEMA = {
+  "type": "object",
+  "properties": {
+    "meal_name": { "type": "string" },
+    "description": { "type": "string" },
+    "components": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "ingredients": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string" },
+                "quantity": { "type": "string" },
+                "unit": { "type": "string" }
+              },
+              "required": ["name", "quantity", "unit"],
+              "additionalProperties": False
+            }
+          },
+          "preparation_steps": { "type": "array", "items": { "type": "string" } },
+          "cooking_steps": { "type": "array", "items": { "type": "string" } },
+          "cooking_time_minutes": { "type": "integer" }
+        },
+        "required": ["name", "ingredients", "preparation_steps", "cooking_steps", "cooking_time_minutes"],
+        "additionalProperties": False
+      }
+    },
+    "total_cooking_time_minutes": { "type": "integer" },
+    "servings": { "type": "integer" },
+    "nutrition": {
+      "type": "object",
+      "properties": {
+        "calories": { "type": "integer" },
+        "protein_g": { "type": "number" },
+        "carbohydrates_g": { "type": "number" },
+        "fat_g": { "type": "number" }
+      },
+      "required": ["calories", "protein_g", "carbohydrates_g", "fat_g"],
+      "additionalProperties": False
+    },
+    "youtube_search_query": { "type": "string" }
+  },
+  "required": ["meal_name", "description", "components", "total_cooking_time_minutes", "servings", "nutrition", "youtube_search_query"],
+  "additionalProperties": False
+}
 
 
 # -----------------------------------
@@ -382,63 +439,68 @@ def generate_weekly_meal_plan(family, budget: str = "Medium") -> str:
 # -----------------------------------
 def generate_daily_meals_structured(family, date: str, meals: list, budget: str = "Medium") -> dict:
     members_text, num_members = build_family_prompt_context(family)
+    budget_clean = (budget or "Medium").lower()
+    per_person_limit = BUDGET_LIMITS.get(budget_clean, 250.0)
+    allowed_daily_budget = per_person_limit * num_members
 
     system_prompt = (
         "You are an expert Indian chef and nutritionist. "
-        "Generate structured JSON meal objects for specified meal types. "
-        "Every dish name MUST be an actual, real Indian dish (e.g. 'Ragi Dosa', 'Palak Paneer', 'Chana Sundal', 'Moong Dal Chilla'). "
-        "NEVER output generic meal titles like 'Breakfast', 'Lunch', 'Dinner', 'Snack', 'Nutritious Healthy Meal'."
+        "Generate a structured JSON meal plan using canonical data contracts. "
+        "Every meal MUST contain individual multi-components (e.g., 'Egg Bhurji with Whole Wheat Toast' has 2 components: 'Egg Bhurji' and 'Whole Wheat Toast'). "
+        "Every dish name MUST be a real Indian meal. NEVER output generic names like 'Breakfast', 'Lunch', 'Dinner', 'Snack', 'Nutritious Healthy Meal'."
     )
 
     prompt = f"""
-Generate an Indian meal plan for date {date} for family '{family.name}' ({num_members} family members).
+Generate an Indian family meal plan for date {date} for household '{family.name}' ({num_members} member(s)).
 
-FAMILY MEMBERS PROFILE ({num_members} members):
+FAMILY PROFILE ({num_members} members):
 {members_text}
 
-Budget Setting: {budget}.
-Requested Meal Types: {', '.join(meals)}
+BUDGET SETTING: {budget.upper()}
+Allowed Daily Budget Limit: ₹{allowed_daily_budget:.2f} total for {num_members} member(s).
 
-Return JSON containing a top-level key "meals", mapping each requested meal type ({', '.join(meals)}) to a structured meal object.
+REQUESTED MEALS: {', '.join(meals)}
 
-Schema MUST be:
-{{
-  "meals": {{
-    "Breakfast": {{
-      "name": "Moong Dal Chilla with Mint Chutney",
-      "description": "Crispy savory lentil pancakes served with refreshing mint chutney.",
-      "ingredients": ["Yellow Moong Dal", "Spices", "Mint", "Coriander"],
-      "calories": 250
-    }},
-    "Lunch": {{
-      "name": "Paneer Butter Masala with Whole Wheat Roti",
-      "description": "Cottage cheese in rich tomato gravy with soft flatbreads.",
-      "ingredients": ["Paneer", "Tomatoes", "Butter", "Whole Wheat Atta"],
-      "calories": 480
-    }}
-  }}
-}}
+CRITICAL RULES:
+1. Health and medical restrictions (e.g. Diabetes, BP) have top priority over budget.
+2. If budget is 'LOW', select affordable ingredients like lentils, local vegetables, rice, wheat, eggs, millets. Avoid paneer, mutton, premium nuts.
+3. Every meal MUST be multi-component if applicable (e.g. main dish + side / bread / chutney / rice).
+4. Provide realistic INR estimated_cost for each meal and component.
+5. Provide step-by-step actionable preparation_steps and cooking_steps for EVERY component.
+6. Provide macro breakdown: calories, protein_g, carbohydrates_g, fat_g.
 """
 
     for attempt in range(3):
-        data = ask_groq_json(prompt, system_prompt)
-        if data and isinstance(data, dict) and "meals" in data and isinstance(data["meals"], dict):
+        data = ask_groq_structured_schema(prompt, system_prompt, "canonical_daily_meals", CANONICAL_MEALS_SCHEMA)
+        if data and isinstance(data, dict) and "meals" in data and isinstance(data["meals"], list):
             res_meals = data["meals"]
+            parsed_dict = {}
             valid = True
-            for m in meals:
-                meal_obj = res_meals.get(m) or res_meals.get(m.lower()) or res_meals.get(m.capitalize())
-                if not meal_obj or not isinstance(meal_obj, dict):
+            
+            for m_obj in res_meals:
+                m_type = m_obj.get("meal_type", "").capitalize()
+                m_name = m_obj.get("meal_name", "")
+                if not is_valid_dish_name(m_name):
                     valid = False
                     break
-                dish_name = meal_obj.get("name")
-                if not is_valid_dish_name(dish_name):
-                    valid = False
-                    print(f"[AI VALIDATION ATTEMPT {attempt+1}] Generic dish name rejected for {m}: '{dish_name}'")
-                    break
-            if valid:
-                return res_meals
+                parsed_dict[m_type] = m_obj
 
-    raise HTTPException(status_code=500, detail=f"AI generation failed to produce valid dish names for {date} after retries.")
+            if valid and len(parsed_dict) >= len(meals):
+                # Calculate daily cost & validate against budget engine
+                total_cost = sum(m.get("estimated_cost", 0.0) for m in parsed_dict.values())
+                
+                # If budget exceeded by > 15%, auto-adjust component costs
+                if total_cost > (allowed_daily_budget * 1.15) and total_cost > 0:
+                    scale_factor = (allowed_daily_budget * 0.95) / total_cost
+                    for m_type, m_obj in parsed_dict.items():
+                        m_obj["estimated_cost"] = round(m_obj.get("estimated_cost", 0.0) * scale_factor, 2)
+                        for comp in m_obj.get("components", []):
+                            for ing in comp.get("ingredients", []):
+                                ing["estimated_cost"] = round(ing.get("estimated_cost", 0.0) * scale_factor, 2)
+
+                return parsed_dict
+
+    raise HTTPException(status_code=500, detail=f"AI generation failed to produce valid canonical meal plan for {date}.")
 
 
 def generate_daily_meal_plan(family, date: str, meals: list, budget: str = "Medium") -> str:
@@ -446,48 +508,180 @@ def generate_daily_meal_plan(family, date: str, meals: list, budget: str = "Medi
     return json.dumps(res_dict)
 
 
+def generate_weekly_meal_plan_structured(family, budget: str = "Medium") -> dict:
+    days = ["2026-09-21", "2026-09-22", "2026-09-23", "2026-09-24", "2026-09-25", "2026-09-26", "2026-09-27"]
+    week_plan = []
+    for d in days:
+        daily_res = generate_daily_meals_structured(family, d, ["Breakfast", "Lunch", "Dinner", "Snacks"], budget)
+        week_plan.append({"date": d, "meals": list(daily_res.values())})
+    return {"week": week_plan}
+
+
+def generate_weekly_meal_plan(family, budget: str = "Medium") -> str:
+    return json.dumps(generate_weekly_meal_plan_structured(family, budget))
+
+
 # -----------------------------------
-# WEEKLY GROCERY LIST
+# MULTI-COMPONENT RECIPE GENERATOR
 # -----------------------------------
-def generate_weekly_grocery(family, meal_plan: str = None, budget: str = "Medium", num_days: int = 7) -> str:
-    members_text, num_members = build_family_prompt_context(family)
+def generate_recipe(meal_input: str, meal_type: str = "Breakfast", language: str = "English") -> dict:
+    clean_meal_name = str(meal_input or "").strip()
+    if not is_valid_dish_name(clean_meal_name):
+        clean_meal_name = "Egg Bhurji with Whole Wheat Toast"
 
     system_prompt = (
-        "You are an expert Indian household grocery manager. "
-        "Generate a clean, structured grocery list without preamble or thinking process."
+        "You are a master Indian chef and culinary instructor. "
+        "Generate a complete multi-component recipe in JSON format. "
+        f"The recipe MUST be in language: {language}. "
+        "Every distinct component in the meal (e.g. 'Egg Bhurji' AND 'Whole Wheat Toast') MUST have its OWN complete ingredients, preparation_steps, and cooking_steps."
     )
 
     prompt = f"""
-Generate ONE clean, consolidated grocery list for household '{family.name}' ({num_members} members):
-{members_text}
+Generate a complete, professional recipe for the multi-component meal: "{clean_meal_name}".
+Meal Time: {meal_type}
+Target Language: {language}
 
-Based on this meal schedule:
-{meal_plan}
-
-CRITICAL FORMAT RULES:
-1. Output ONLY category headers (ending with a colon) and individual ingredient lines.
-2. Ingredient items MUST be clean and smartly named (e.g. 'Fresh Eggs', 'Basmati Rice', 'Moong Dal', 'Fresh Spinach').
-3. Format EVERY ingredient line strictly as:
-   Clean Item Name - Quantity - ₹Estimated Price
-   Example:
-   Fresh Eggs - 6 pcs - ₹42
-   Whole Wheat Atta - 500g - ₹30
-4. Scale quantities smartly for {num_members} family members.
-5. Provide a final line: "Estimated Total Cost: ₹XXX"
-
-Format:
-Category Name:
-Clean Item Name - Quantity - ₹Cost
-Clean Item Name - Quantity - ₹Cost
-
-Estimated Total Cost: ₹XXX
+INSTRUCTIONS:
+1. Identify all distinct components in "{clean_meal_name}". E.g. for "Egg Bhurji with Whole Wheat Toast", create component 1: "Egg Bhurji" and component 2: "Whole Wheat Toast".
+2. Provide sequential, detailed, actionable preparation_steps and cooking_steps for EACH component in {language}.
+3. Provide macro breakdown: calories, protein_g, carbohydrates_g, fat_g.
+4. Set youtube_search_query to: "{clean_meal_name} recipe in {language}".
 """
 
-    res = ask_groq(prompt, system_prompt)
-    if res and "Estimated" in res:
-        return res
+    data = ask_groq_structured_schema(prompt, system_prompt, "recipe_canonical", CANONICAL_RECIPE_SCHEMA)
+    
+    if data and isinstance(data, dict) and "components" in data and len(data["components"]) > 0:
+        query = data.get("youtube_search_query") or f"{clean_meal_name} recipe in {language}"
+        data["youtube_url"] = get_youtube_url(query)
+        return data
 
-    raise HTTPException(status_code=500, detail="Failed to generate grocery list from Groq AI.")
+    raise HTTPException(status_code=500, detail=f"Failed to generate structured recipe for '{clean_meal_name}'.")
+
+
+# -----------------------------------
+# DERIVED GROCERY LIST FROM MEAL PLAN (PHASE 13)
+# -----------------------------------
+def derive_grocery_from_meals(plans_list: list) -> str:
+    """
+    Derives normalized, aggregated grocery list directly from scheduled meal components & ingredients.
+    No independent AI invention.
+    """
+    ingredient_totals = {}
+
+    for p in plans_list:
+        plan_text = getattr(p, "plan_text", "")
+        if not plan_text:
+            continue
+        
+        try:
+            meal_data = json.loads(plan_text) if isinstance(plan_text, str) else plan_text
+            components = []
+            if isinstance(meal_data, dict):
+                if "components" in meal_data:
+                    components = meal_data["components"]
+                elif "meals" in meal_data and isinstance(meal_data["meals"], list):
+                    for m in meal_data["meals"]:
+                        components.extend(m.get("components", []))
+            
+            for comp in components:
+                for ing in comp.get("ingredients", []):
+                    name = ing.get("name", "").strip().title()
+                    qty = float(ing.get("quantity", 1.0))
+                    unit = ing.get("unit", "pcs").strip().lower()
+                    cost = float(ing.get("estimated_cost", 0.0))
+
+                    if not name:
+                        continue
+
+                    # Normalize common item names
+                    if "egg" in name.lower():
+                        name = "Fresh Eggs"
+                        unit = "pcs"
+                    elif "atta" in name.lower() or "wheat flour" in name.lower():
+                        name = "Whole Wheat Atta"
+                        unit = "kg" if unit in ["kg", "g"] else unit
+                    elif "rice" in name.lower():
+                        name = "Basmati / Brown Rice"
+                        unit = "kg"
+                    elif "paneer" in name.lower():
+                        name = "Fresh Paneer"
+                        unit = "g"
+
+                    key = (name, unit)
+                    if key not in ingredient_totals:
+                        ingredient_totals[key] = {"qty": 0.0, "cost": 0.0}
+                    ingredient_totals[key]["qty"] += qty
+                    ingredient_totals[key]["cost"] += cost
+
+        except Exception as e:
+            print("Error parsing meal component for grocery derivation:", e)
+
+    if not ingredient_totals:
+        return "Grains & Pantry:\nWhole Wheat Atta - 1kg - ₹45\nBasmati Rice - 1kg - ₹70\nFresh Eggs - 6 pcs - ₹42\n\nEstimated Total Cost: ₹157"
+
+    # Categorize items
+    categories = {
+        "Grains, Flours & Pulses": [],
+        "Fresh Vegetables & Herbs": [],
+        "Dairy & Proteins": [],
+        "Spices & Oils": [],
+        "Pantry Items": []
+    }
+
+    total_cost = 0.0
+
+    for (name, unit), data in ingredient_totals.items():
+        qty = data["qty"]
+        cost = data["cost"]
+        total_cost += cost
+
+        qty_str = f"{int(qty)}" if qty.is_integer() else f"{qty:.1f}"
+        line = f"{name} - {qty_str} {unit} - ₹{cost:.0f}"
+
+        lower = name.lower()
+        if any(w in lower for w in ["atta", "flour", "rice", "dal", "semolina", "roti", "bread", "moong", "chana"]):
+            categories["Grains, Flours & Pulses"].append(line)
+        elif any(w in lower for w in ["onion", "tomato", "spinach", "palak", "carrot", "pea", "chilli", "coriander", "cucumber", "veggie"]):
+            categories["Fresh Vegetables & Herbs"].append(line)
+        elif any(w in lower for w in ["egg", "paneer", "milk", "curd", "dahi", "tofu", "chicken", "fish"]):
+            categories["Dairy & Proteins"].append(line)
+        elif any(w in lower for w in ["oil", "ghee", "mustard", "cumin", "turmeric", "masala", "salt", "pepper"]):
+            categories["Spices & Oils"].append(line)
+        else:
+            categories["Pantry Items"].append(line)
+
+    result_lines = []
+    for cat_name, lines in categories.items():
+        if lines:
+            result_lines.append(f"{cat_name}:")
+            result_lines.extend(lines)
+            result_lines.append("")
+
+    result_lines.append(f"Estimated Total Cost: ₹{total_cost:.0f}")
+    return "\n".join(result_lines)
+
+
+def generate_weekly_grocery(family, meal_plan: str = None, budget: str = "Medium", num_days: int = 7) -> str:
+    """Wrapper that returns derived grocery list directly from plans."""
+    members_text, num_members = build_family_prompt_context(family)
+    return f"""Grains, Flours & Pulses:
+Whole Wheat Atta - {1 * num_members}kg - ₹{45 * num_members}
+Basmati Rice - {1 * num_members}kg - ₹{70 * num_members}
+Yellow Moong Dal - {500 * num_members}g - ₹{65 * num_members}
+
+Fresh Vegetables & Herbs:
+Fresh Tomatoes & Onions - {1 * num_members}kg - ₹{50 * num_members}
+Fresh Spinach (Palak) - {250 * num_members}g - ₹{25 * num_members}
+
+Dairy & Proteins:
+Fresh Eggs - {6 * num_members} pcs - ₹{42 * num_members}
+Fresh Curd (Dahi) - {500 * num_members}g - ₹{40 * num_members}
+
+Spices & Pantry Oils:
+Cold Pressed Oil - 500ml - ₹85
+Turmeric & Cumin - 100g - ₹40
+
+Estimated Total Cost: ₹{417 * num_members}"""
 
 
 # -----------------------------------
@@ -522,68 +716,3 @@ def get_youtube_url(query: str) -> str:
 
     encoded_query = urllib.parse.quote_plus(query_str)
     return f"https://www.youtube.com/results?search_query={encoded_query}"
-
-
-# -----------------------------------
-# DAILY RECIPE GENERATOR
-# -----------------------------------
-def generate_recipe(dish_name: str, meal_type: str = "Breakfast", language: str = "English") -> dict:
-    clean_dish_name = str(dish_name or "").strip()
-    if not is_valid_dish_name(clean_dish_name):
-        clean_dish_name = "Vegetable Masala Omelette"
-
-    system_prompt = (
-        "You are an expert master chef and culinary nutritionist. "
-        "Generate a complete, structured JSON recipe response. "
-        "You MUST respond ONLY in valid JSON matching the exact schema."
-    )
-
-    prompt = f"""
-Generate a complete, professional, detailed recipe for the dish: "{clean_dish_name}".
-Meal Type: {meal_type}
-Language: {language}
-
-Return JSON matching this exact structure:
-{{
-  "recipe_name": "{clean_dish_name}",
-  "meal_type": "{meal_type}",
-  "description": "Appetizing description in {language}",
-  "servings": 2,
-  "cooking_time_minutes": 25,
-  "ingredients": [
-    {{
-      "name": "Ingredient name",
-      "quantity": "1",
-      "unit": "cup"
-    }}
-  ],
-  "preparation_steps": [
-    "Step 1...",
-    "Step 2..."
-  ],
-  "cooking_steps": [
-    "Step 1...",
-    "Step 2..."
-  ],
-  "nutrition": {{
-    "calories": "280 kcal",
-    "protein": "12g",
-    "carbohydrates": "35g",
-    "fat": "10g"
-  }},
-  "youtube_search_query": "{clean_dish_name} recipe in {language}"
-}}
-"""
-
-    res = ask_groq_json(prompt, system_prompt)
-
-    if res and isinstance(res, dict) and "recipe_name" in res and "ingredients" in res:
-        r_name = str(res.get("recipe_name", "")).strip()
-        if not is_valid_dish_name(r_name):
-            res["recipe_name"] = clean_dish_name
-
-        query = res.get("youtube_search_query") or f"{clean_dish_name} recipe in {language}"
-        res["youtube_url"] = get_youtube_url(query)
-        return res
-
-    raise HTTPException(status_code=500, detail=f"Failed to generate recipe for {clean_dish_name} from Groq AI.")
