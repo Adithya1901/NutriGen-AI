@@ -78,9 +78,12 @@ function Members() {
       const payload = {
         name: form.name.trim(),
         age: parseInt(form.age, 10) || 0,
+        weight: form.weight ? form.weight.trim() : "",
+        height: form.height ? form.height.trim() : "",
         goal: form.goal || "Weight Loss",
         health_condition: form.health_condition || "None",
-        diet: form.diet || "Vegetarian"
+        diet: form.diet || "Vegetarian",
+        meal_preferences: form.meal_preferences ? form.meal_preferences.trim() : ""
       };
 
       await api.post(`/families/${familyId}/members`, payload);
@@ -167,17 +170,31 @@ function Members() {
               <h3>Add Member</h3>
 
               <input
-                placeholder="Member Name"
+                placeholder="Member Name *"
                 value={form.name || ""}
                 onChange={(e) => updateForm(family.id, "name", e.target.value)}
                 disabled={isMemberSubmitting}
               />
 
               <input
-                placeholder="Age"
+                placeholder="Age *"
                 type="number"
                 value={form.age || ""}
                 onChange={(e) => updateForm(family.id, "age", e.target.value)}
+                disabled={isMemberSubmitting}
+              />
+
+              <input
+                placeholder="Weight (e.g. 70 kg)"
+                value={form.weight || ""}
+                onChange={(e) => updateForm(family.id, "weight", e.target.value)}
+                disabled={isMemberSubmitting}
+              />
+
+              <input
+                placeholder="Height (e.g. 175 cm)"
+                value={form.height || ""}
+                onChange={(e) => updateForm(family.id, "height", e.target.value)}
                 disabled={isMemberSubmitting}
               />
 
@@ -201,6 +218,8 @@ function Members() {
                 <option>Diabetes</option>
                 <option>BP</option>
                 <option>Thyroid</option>
+                <option>Cholesterol</option>
+                <option>Heart Disease</option>
               </select>
 
               <select
@@ -211,7 +230,15 @@ function Members() {
                 <option>Vegetarian</option>
                 <option>Non Vegetarian</option>
                 <option>Vegan</option>
+                <option>Jain</option>
               </select>
+
+              <input
+                placeholder="Meal Preferences (e.g. South Indian, Low Oil)"
+                value={form.meal_preferences || ""}
+                onChange={(e) => updateForm(family.id, "meal_preferences", e.target.value)}
+                disabled={isMemberSubmitting}
+              />
 
               <button
                 onClick={() => addMember(family.id)}
@@ -227,13 +254,19 @@ function Members() {
               {family.members && family.members.length > 0 ? (
                 family.members.map((m) => (
                   <div key={m.id} className="member-box">
-                    <b>{m.name}</b> ({m.age} yrs)
+                    <b>{m.name}</b> ({m.age} yrs{m.weight ? `, ${m.weight}` : ""}{m.height ? `, ${m.height}` : ""})
                     <br />
                     Goal: {m.goal}
                     <br />
                     Condition: {m.health_condition}
                     <br />
                     Diet: {m.diet}
+                    {m.meal_preferences && (
+                      <>
+                        <br />
+                        Preferences: {m.meal_preferences}
+                      </>
+                    )}
                     <br />
 
                     <button onClick={() => deleteMember(m.id)}>

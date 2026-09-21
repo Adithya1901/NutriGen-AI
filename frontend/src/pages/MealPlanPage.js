@@ -138,25 +138,33 @@ function MealPlanPage() {
     }
   };
 
-  const getCleanRecipeNames = (text) => {
-    if (!text) return [];
-    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-    const recipes = [];
-    for (let line of lines) {
-      let cleaned = line.replace(/^[\-\*\•]\s*/, '');
-      if (cleaned.includes(':')) {
-        const parts = cleaned.split(':');
-        const prefix = parts[0].toLowerCase();
-        if (prefix.includes('for ') || prefix.includes('breakfast') || prefix.includes('lunch') || prefix.includes('dinner') || prefix.includes('snack')) {
-          cleaned = parts.slice(1).join(':').trim();
-        }
-      }
-      cleaned = cleaned.replace(/^["']|["']$/g, '').trim();
-      if (cleaned) {
-        recipes.push(cleaned);
-      }
+  const parseMealDetails = (planText) => {
+    if (!planText) {
+      return { name: "Indian Home Meal", description: "", ingredients: [], calories: 0 };
     }
-    return recipes.length > 0 ? recipes : [text];
+    try {
+      const parsed = typeof planText === 'string' ? JSON.parse(planText) : planText;
+      if (parsed && typeof parsed === 'object' && parsed.name) {
+        return {
+          name: parsed.name,
+          description: parsed.description || "",
+          ingredients: Array.isArray(parsed.ingredients) ? parsed.ingredients : [],
+          calories: parsed.calories || 0
+        };
+      }
+    } catch (e) {
+      // Fallback for plain text
+    }
+
+    const lines = planText.split('\n').map(l => l.trim()).filter(Boolean);
+    let firstLine = lines[0] || planText;
+    firstLine = firstLine.replace(/^[\-\*\•]\s*/, '').replace(/^["']|["']$/g, '');
+    return {
+      name: firstLine,
+      description: lines.slice(1).join(' '),
+      ingredients: [],
+      calories: 0
+    };
   };
 
   const getMealIcon = (mealType) => {
@@ -283,7 +291,7 @@ function MealPlanPage() {
               </h2>
               <div className="grid">
                 {datePlans.map((plan, idx) => {
-                  const recipes = getCleanRecipeNames(plan.plan_text);
+                  const mealDetails = parseMealDetails(plan.plan_text);
                   const mealIcon = getMealIcon(plan.meal_type);
 
                   return (
@@ -323,34 +331,72 @@ function MealPlanPage() {
                           </button>
                         </div>
 
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
-                          {recipes.map((recipeName, rIdx) => (
-                            <div 
-                              key={rIdx} 
-                              style={{
-                                background: 'linear-gradient(135deg, rgba(14, 165, 233, 0.12), rgba(59, 130, 246, 0.06))',
-                                border: '1px solid rgba(56, 189, 248, 0.25)',
-                                borderRadius: '12px',
-                                padding: '14px 16px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '12px',
-                                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.2)',
-                                transition: 'all 0.3s ease'
-                              }}
-                            >
-                              <span style={{ fontSize: '1.2em', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))' }}>✨</span>
-                              <span style={{ 
-                                color: '#f8fafc', 
-                                fontWeight: '600', 
-                                fontSize: '1.05rem', 
-                                letterSpacing: '0.3px',
-                                lineHeight: '1.4'
+                        {/* Structured Dish Name */}
+                        <div 
+                          style={{
+                            background: 'linear-gradient(135deg, rgba(14, 165, 233, 0.12), rgba(59, 130, 246, 0.06))',
+                            border: '1px solid rgba(56, 189, 248, 0.25)',
+                            borderRadius: '12px',
+                            padding: '14px 16px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '8px',
+                            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.2)'
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ 
+                              color: '#f8fafc', 
+                              fontWeight: '700', 
+                              fontSize: '1.1rem', 
+                              letterSpacing: '0.3px',
+                              lineHeight: '1.4'
+                            }}>
+                              ✨ {mealDetails.name}
+                            </span>
+                            {mealDetails.calories > 0 && (
+                              <span style={{
+                                background: 'rgba(245, 158, 11, 0.18)',
+                                color: '#fbbf24',
+                                border: '1px solid rgba(245, 158, 11, 0.3)',
+                                fontSize: '0.75rem',
+                                fontWeight: '700',
+                                padding: '3px 9px',
+                                borderRadius: '10px'
                               }}>
-                                {recipeName}
+                                🔥 {mealDetails.calories} kcal
                               </span>
+                            )}
+                          </div>
+
+                          {/* Meal Description */}
+                          {mealDetails.description && (
+                            <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.88rem', lineHeight: '1.4' }}>
+                              {mealDetails.description}
+                            </p>
+                          )}
+
+                          {/* Ingredients List */}
+                          {mealDetails.ingredients && mealDetails.ingredients.length > 0 && (
+                            <div style={{ marginTop: '6px', display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                              {mealDetails.ingredients.map((ing, ingIdx) => (
+                                <span 
+                                  key={ingIdx}
+                                  style={{
+                                    background: '#1e293b',
+                                    color: '#38bdf8',
+                                    border: '1px solid rgba(56, 189, 248, 0.2)',
+                                    fontSize: '0.72rem',
+                                    padding: '2px 8px',
+                                    borderRadius: '6px',
+                                    fontWeight: '500'
+                                  }}
+                                >
+                                  {ing}
+                                </span>
+                              ))}
                             </div>
-                          ))}
+                          )}
                         </div>
                       </div>
 

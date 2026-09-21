@@ -12,9 +12,12 @@ def add_member(family_id: int, data: schemas.MemberCreate):
         member = models.Member(
             name=data.name,
             age=data.age,
+            weight=data.weight,
+            height=data.height,
             goal=data.goal,
             health_condition=data.health_condition,
             diet=data.diet,
+            meal_preferences=data.meal_preferences,
             family_id=family_id
         )
 

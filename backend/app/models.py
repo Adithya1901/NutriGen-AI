@@ -30,9 +30,12 @@ class Member(Base):
 
     name = Column(String)
     age = Column(Integer)
+    weight = Column(String, nullable=True)
+    height = Column(String, nullable=True)
     goal = Column(String)
     health_condition = Column(String)
     diet = Column(String)
+    meal_preferences = Column(String, nullable=True)
 
     family = relationship(
         "Family",

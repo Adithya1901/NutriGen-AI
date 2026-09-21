@@ -3,8 +3,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.routes import family, member, mealplan, grocery, recipe
 from app.database import engine, Base
+import migrate
 
 Base.metadata.create_all(bind=engine)
+try:
+    migrate.run_migrations()
+except Exception as e:
+    print("Migration on startup note:", e)
 
 app = FastAPI(
     title="NutriGen AI API",

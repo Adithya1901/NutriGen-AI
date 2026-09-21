@@ -5,13 +5,24 @@ from typing import List, Optional
 class MemberCreate(BaseModel):
     name: str
     age: int
+    weight: Optional[str] = None
+    height: Optional[str] = None
     goal: str
     health_condition: str
     diet: str
+    meal_preferences: Optional[str] = None
 
 
-class MemberOut(MemberCreate):
+class MemberOut(BaseModel):
     id: int
+    name: str
+    age: int
+    weight: Optional[str] = None
+    height: Optional[str] = None
+    goal: str
+    health_condition: str
+    diet: str
+    meal_preferences: Optional[str] = None
 
     class Config:
         from_attributes = True

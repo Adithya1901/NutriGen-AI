@@ -1,7 +1,11 @@
 from fastapi import APIRouter, HTTPException
 from app.database import SessionLocal
 from app.models import Family, WeeklyPlan, DailyPlan, CustomGroceryList
-from app.ai import generate_weekly_meal_plan, generate_weekly_grocery, generate_daily_meal_plan
+from app.ai import (
+    generate_weekly_meal_plan_structured,
+    generate_weekly_grocery,
+    generate_daily_meals_structured
+)
 from app.utils.helpers import get_current_ist_week
 from datetime import datetime, timezone, timedelta
 from typing import List
@@ -29,7 +33,8 @@ def meal(id: int):
         ).first()
 
         if not weekly_plan:
-            meal_plan_text = generate_weekly_meal_plan(family)
+            structured_plan = generate_weekly_meal_plan_structured(family)
+            meal_plan_text = json.dumps(structured_plan)
             grocery_list_text = generate_weekly_grocery(family, meal_plan_text)
 
             weekly_plan = WeeklyPlan(
@@ -48,56 +53,6 @@ def meal(id: int):
         }
     finally:
         db.close()
-
-from typing import List
-from app import schemas
-from app.models import DailyPlan
-from app.ai import generate_daily_meal_plan
-import re
-
-from app.models import DailyPlan, CustomGroceryList
-import json
-
-def parse_daily_plan_response(daily_plan_text: str, meals: list) -> dict:
-    parsed = {}
-    if not daily_plan_text or "GROQ ERROR" in daily_plan_text or "REQUEST ERROR" in daily_plan_text:
-        for m in meals:
-            parsed[m] = "Nutritious Indian Home Meal"
-        return parsed
-
-    clean_text = re.sub(r'[*#]', '', daily_plan_text).strip()
-    meal_pattern = r'(' + '|'.join([re.escape(m) for m in meals]) + r'):'
-    split_parts = re.split(meal_pattern, clean_text, flags=re.IGNORECASE)
-    
-    if len(split_parts) >= 3:
-        for i in range(1, len(split_parts) - 1, 2):
-            meal_name = split_parts[i].strip()
-            meal_content = split_parts[i+1].strip()
-            
-            matched_meal = next((m for m in meals if m.lower() == meal_name.lower()), None)
-            if matched_meal:
-                lines = [l.strip() for l in meal_content.split('\n') if l.strip()]
-                cleaned_lines = []
-                for l in lines:
-                    l_clean = re.sub(r'^[\-\*\•]\s*', '', l)
-                    if ':' in l_clean:
-                        parts = l_clean.split(':')
-                        if 'for ' in parts[0].lower() or matched_meal.lower() in parts[0].lower():
-                            l_clean = ':'.join(parts[1:]).strip()
-                    if l_clean and not any(m.lower() + ':' in l_clean.lower() for m in meals):
-                        cleaned_lines.append(l_clean)
-                
-                parsed[matched_meal] = "\n".join(cleaned_lines) if cleaned_lines else (lines[0] if lines else "Nutritious Indian Meal")
-
-    for m in meals:
-        if m not in parsed or not parsed[m]:
-            match = re.search(rf"{re.escape(m)}[\s:-]+(.*)", clean_text, re.IGNORECASE)
-            if match and match.group(1).strip():
-                parsed[m] = match.group(1).strip()
-            else:
-                parsed[m] = "Nutritious Healthy Meal"
-
-    return parsed
 
 
 @router.post("/families/{id}/multi-daily-plan", response_model=schemas.MultiDailyPlanResponse)
@@ -131,20 +86,20 @@ def create_multi_daily_plan(id: int, req: schemas.MultiDailyPlanRequest):
             missing_meals = [m for m in req.meals if m not in existing_meal_types]
 
             if missing_meals:
-                try:
-                    daily_plan_text = generate_daily_meal_plan(family, target_date, missing_meals, req.budget)
-                except Exception as e:
-                    print("Error calling generate_daily_meal_plan:", e)
-                    daily_plan_text = ""
+                res_meals = generate_daily_meals_structured(family, target_date, missing_meals, req.budget or "Medium")
 
-                parsed_meals = parse_daily_plan_response(daily_plan_text, missing_meals)
-
-                for meal in missing_meals:
-                    plan_content = parsed_meals.get(meal, "Nutritious Indian Meal")
+                for meal_type in missing_meals:
+                    meal_obj = res_meals.get(meal_type) or res_meals.get(meal_type.lower()) or res_meals.get(meal_type.capitalize())
+                    if not meal_obj or not isinstance(meal_obj, dict):
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"AI meal generation returned incomplete meal object for '{meal_type}'"
+                        )
+                    plan_content = json.dumps(meal_obj)
                     plan = DailyPlan(
                         family_id=family.id,
                         date=target_date,
-                        meal_type=meal,
+                        meal_type=meal_type,
                         plan_text=plan_content
                     )
                     db.add(plan)
@@ -163,7 +118,7 @@ def create_multi_daily_plan(id: int, req: schemas.MultiDailyPlanRequest):
             for p in final_plans_for_date:
                 combined_meal_text += f"{p.meal_type}: {p.plan_text}\n"
 
-        # Consolidate grocery generation to ONE active list for all upcoming plans!
+        # Consolidate grocery generation to ONE active list for all upcoming plans
         ist = timezone(timedelta(hours=5, minutes=30))
         today_str = datetime.now(ist).strftime("%Y-%m-%d")
         
@@ -180,13 +135,7 @@ def create_multi_daily_plan(id: int, req: schemas.MultiDailyPlanRequest):
         
         final_grocery_string = ""
         if full_grocery_text.strip():
-            try:
-                final_grocery_string = generate_weekly_grocery(family, full_grocery_text)
-                if "GROQ ERROR" in final_grocery_string or "REQUEST ERROR" in final_grocery_string:
-                    final_grocery_string = "Grocery list generated based on scheduled meals."
-            except Exception as e:
-                print("Error generating grocery list:", e)
-                final_grocery_string = "Grocery list generated based on scheduled meals."
+            final_grocery_string = generate_weekly_grocery(family, full_grocery_text)
 
             new_list = CustomGroceryList(
                 family_id=id,
@@ -277,25 +226,24 @@ def get_upcoming_plans(id: int):
 
                 try:
                     new_grocery_text = generate_weekly_grocery(family, combined_meal_text)
-                    if "GROQ ERROR" in new_grocery_text or "REQUEST ERROR" in new_grocery_text or not new_grocery_text.strip():
-                        new_grocery_text = "Grocery list generated based on scheduled meals."
                 except Exception as e:
                     print("Error auto-generating grocery list:", e)
-                    new_grocery_text = "Grocery list generated based on scheduled meals."
+                    new_grocery_text = ""
 
-                new_list = CustomGroceryList(
-                    family_id=id,
-                    dates='["all_upcoming"]',
-                    meals='["all_upcoming"]',
-                    grocery_text=new_grocery_text
-                )
-                db.add(new_list)
-                db.commit()
+                if new_grocery_text.strip():
+                    new_list = CustomGroceryList(
+                        family_id=id,
+                        dates='["all_upcoming"]',
+                        meals='["all_upcoming"]',
+                        grocery_text=new_grocery_text
+                    )
+                    db.add(new_list)
+                    db.commit()
 
-                upcoming_groceries = [{
-                    "dates": ["all_upcoming"],
-                    "grocery_list": new_grocery_text
-                }]
+                    upcoming_groceries = [{
+                        "dates": ["all_upcoming"],
+                        "grocery_list": new_grocery_text
+                    }]
 
         return {
             "plans": serialized_plans,
