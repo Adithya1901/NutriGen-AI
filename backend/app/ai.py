@@ -10,21 +10,17 @@ load_dotenv()
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-GROQ_MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b").strip()
+# -----------------------------------
+# CENTRALIZED PRODUCTION GROQ MODEL CONFIGURATION
+# Single Source of Truth
+# -----------------------------------
+DEFAULT_PRIMARY_MODEL = "openai/gpt-oss-120b"
+DEFAULT_SECONDARY_MODEL = "openai/gpt-oss-20b"
 
-def get_supported_models() -> list:
-    primary = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b").strip()
-    fallbacks = [
-        "qwen/qwen3.8-27b",
-        "llama-3.3-70b-versatile",
-        "llama-3.1-8b-instant",
-        "gemma2-9b-it"
-    ]
-    models = [primary]
-    for m in fallbacks:
-        if m not in models:
-            models.append(m)
-    return models
+GROQ_MODEL = os.getenv("GROQ_MODEL", DEFAULT_PRIMARY_MODEL).strip()
+
+_cached_selected_model = None
+_cached_active_models = []
 
 GENERIC_MEAL_NAMES = {
     "breakfast", "lunch", "dinner", "snack", "snacks",
@@ -43,6 +39,83 @@ def get_groq_api_key() -> str:
             detail="GROQ_API_KEY is missing in backend environment"
         )
     return api_key.strip()
+
+def fetch_active_groq_models(api_key: str) -> list:
+    """Fetch active supported models dynamically from Groq Models API (GET /v1/models)."""
+    global _cached_active_models
+    headers = {"Authorization": f"Bearer {api_key}"}
+    try:
+        res = requests.get("https://api.groq.com/openai/v1/models", headers=headers, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            items = data.get("data", [])
+            _cached_active_models = [m.get("id") for m in items if isinstance(m, dict) and "id" in m]
+            return _cached_active_models
+        elif res.status_code == 401:
+            raise HTTPException(status_code=401, detail="Groq API authentication error: Invalid API key")
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"[AI WARNING] Could not fetch active Groq models: {e}")
+    return _cached_active_models
+
+def get_selected_groq_model(force_refresh: bool = False) -> str:
+    """
+    SINGLE SOURCE OF TRUTH FOR GROQ MODEL SELECTION.
+    Validates model against active Groq models API with safe production fallbacks.
+    """
+    global _cached_selected_model
+    if _cached_selected_model and not force_refresh:
+        return _cached_selected_model
+
+    api_key = get_groq_api_key()
+    env_model = os.getenv("GROQ_MODEL", "").strip()
+    
+    candidate_models = []
+    if env_model:
+        candidate_models.append(env_model)
+    candidate_models.extend([
+        DEFAULT_PRIMARY_MODEL,
+        DEFAULT_SECONDARY_MODEL
+    ])
+    
+    unique_candidates = []
+    for m in candidate_models:
+        if m and m not in unique_candidates:
+            unique_candidates.append(m)
+            
+    active_models = fetch_active_groq_models(api_key)
+    
+    if active_models:
+        for model_id in unique_candidates:
+            if model_id in active_models:
+                _cached_selected_model = model_id
+                print(f"[AI SUCCESS] Groq model selected: {model_id}")
+                return model_id
+                
+        first_active = active_models[0]
+        _cached_selected_model = first_first_active if 'first_first_active' in locals() else first_active
+        print(f"[AI NOTICE] Configured model unavailable. Selected active Groq model: {first_active}")
+        return first_active
+
+    selected = unique_candidates[0]
+    _cached_selected_model = selected
+    print(f"[AI NOTICE] Groq model selected (unverified): {selected}")
+    return selected
+
+def validate_groq_startup() -> bool:
+    """Startup fail-fast validation check called when FastAPI app launches."""
+    try:
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            print("[STARTUP WARNING] GROQ_API_KEY environment variable is missing.")
+            return False
+        selected = get_selected_groq_model(force_refresh=True)
+        print(f"[STARTUP SUCCESS] Groq model selected: {selected}")
+        return True
+    except Exception as e:
+        print(f"[STARTUP ERROR] Groq initialization failed: {e}")
+        return False
 
 def is_valid_dish_name(name: str) -> bool:
     if not name or not isinstance(name, str):
@@ -63,6 +136,8 @@ def is_valid_dish_name(name: str) -> bool:
 # -----------------------------------
 def ask_groq(prompt: str, system_prompt: str = None) -> str:
     api_key = get_groq_api_key()
+    selected_model = get_selected_groq_model()
+
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
@@ -72,61 +147,47 @@ def ask_groq(prompt: str, system_prompt: str = None) -> str:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
 
-    last_status = None
-    last_error_msg = ""
+    data = {
+        "model": selected_model,
+        "messages": messages,
+        "temperature": 0.5,
+        "max_tokens": 4096
+    }
+    
+    try:
+        res = requests.post(GROQ_URL, headers=headers, json=data, timeout=60)
+        
+        if res.status_code == 401:
+            print(f"[AI ERROR] Groq 401 Auth Error on model {selected_model}")
+            raise HTTPException(status_code=401, detail="Groq API authentication error: Invalid API key")
+        elif res.status_code == 403:
+            print(f"[AI ERROR] Groq 403 Permission Error on model {selected_model}")
+            raise HTTPException(status_code=403, detail="Groq API permission error")
+        elif res.status_code == 429:
+            print(f"[AI ERROR] Groq 429 Rate Limit Error on model {selected_model}")
+            raise HTTPException(status_code=429, detail="Groq API rate limit error. Please try again in a few moments.")
+        elif res.status_code == 400:
+            result = res.json() if res.text else {}
+            err_msg = result.get("error", {}).get("message", "Invalid request or model schema")
+            print(f"[AI ERROR] Groq 400 Error on model {selected_model}: {err_msg}")
+            raise HTTPException(status_code=400, detail=f"Configured Groq model error: {err_msg}")
+        elif res.status_code >= 500:
+            print(f"[AI ERROR] Groq {res.status_code} Server Error on model {selected_model}")
+            raise HTTPException(status_code=500, detail="Groq AI service error. Please try again later.")
 
-    for model_name in get_supported_models():
-        data = {
-            "model": model_name,
-            "messages": messages,
-            "temperature": 0.5,
-            "max_tokens": 4096
-        }
-        try:
-            res = requests.post(GROQ_URL, headers=headers, json=data, timeout=60)
-            last_status = res.status_code
+        result = res.json()
+        if "choices" in result and len(result["choices"]) > 0:
+            content = result["choices"][0]["message"]["content"] or ""
+            if "<think>" in content:
+                content = re.sub(r'<think>[\s\S]*?</think>', '', content, flags=re.IGNORECASE).strip()
+            return content.strip()
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"[AI ERROR] Request exception on model {selected_model}: {e}")
+        raise HTTPException(status_code=500, detail=f"Groq AI service call failed: {str(e)}")
 
-            if res.status_code == 401:
-                print(f"[AI] Groq 401 Auth Error on model {model_name}")
-                raise HTTPException(status_code=401, detail="Groq API authentication error: Invalid API key")
-            elif res.status_code == 403:
-                print(f"[AI] Groq 403 Permission Error on model {model_name}")
-                raise HTTPException(status_code=403, detail="Groq API permission error")
-            elif res.status_code == 429:
-                print(f"[AI] Groq 429 Rate Limit Error on model {model_name}")
-                last_error_msg = "Rate limit error"
-                continue
-            elif res.status_code == 400:
-                result = res.json() if res.text else {}
-                err_msg = result.get("error", {}).get("message", "Bad request or schema error")
-                print(f"[AI] Groq 400 Error on model {model_name}: {err_msg}")
-                last_error_msg = err_msg
-                continue
-            elif res.status_code >= 500:
-                print(f"[AI] Groq {res.status_code} Server Error on model {model_name}")
-                last_error_msg = f"Server error {res.status_code}"
-                continue
-
-            result = res.json()
-            if "choices" in result and len(result["choices"]) > 0:
-                content = result["choices"][0]["message"]["content"] or ""
-                if "<think>" in content:
-                    content = re.sub(r'<think>[\s\S]*?</think>', '', content, flags=re.IGNORECASE).strip()
-                return content.strip()
-        except HTTPException as he:
-            raise he
-        except Exception as e:
-            print(f"[AI] Request exception on model {model_name}: {e}")
-            last_error_msg = str(e)
-
-    if last_status == 429:
-        raise HTTPException(status_code=429, detail="Groq API rate limit error. Please try again in a few moments.")
-    elif last_status == 400:
-        raise HTTPException(status_code=400, detail=f"Groq API request error: {last_error_msg}")
-    elif last_status and last_status >= 500:
-        raise HTTPException(status_code=500, detail="Groq AI service error. Please try again later.")
-    else:
-        raise HTTPException(status_code=500, detail=f"Groq AI service call failed: {last_error_msg}")
+    raise HTTPException(status_code=500, detail="Groq AI returned an empty response.")
 
 
 # -----------------------------------
@@ -134,6 +195,8 @@ def ask_groq(prompt: str, system_prompt: str = None) -> str:
 # -----------------------------------
 def ask_groq_json(prompt: str, system_prompt: str = None) -> dict:
     api_key = get_groq_api_key()
+    selected_model = get_selected_groq_model()
+
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
@@ -143,68 +206,54 @@ def ask_groq_json(prompt: str, system_prompt: str = None) -> dict:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
 
-    last_status = None
-    last_error_msg = ""
+    data = {
+        "model": selected_model,
+        "messages": messages,
+        "temperature": 0.4,
+        "max_tokens": 4096,
+        "response_format": {"type": "json_object"}
+    }
 
-    for model_name in get_supported_models():
-        data = {
-            "model": model_name,
-            "messages": messages,
-            "temperature": 0.4,
-            "max_tokens": 4096,
-            "response_format": {"type": "json_object"}
-        }
-        try:
-            res = requests.post(GROQ_URL, headers=headers, json=data, timeout=60)
-            last_status = res.status_code
+    try:
+        res = requests.post(GROQ_URL, headers=headers, json=data, timeout=60)
 
-            if res.status_code == 401:
-                print(f"[AI] Groq 401 Auth Error on model {model_name}")
-                raise HTTPException(status_code=401, detail="Groq API authentication error: Invalid API key")
-            elif res.status_code == 403:
-                print(f"[AI] Groq 403 Permission Error on model {model_name}")
-                raise HTTPException(status_code=403, detail="Groq API permission error")
-            elif res.status_code == 429:
-                print(f"[AI] Groq 429 Rate Limit Error on model {model_name}")
-                last_error_msg = "Rate limit error"
-                continue
-            elif res.status_code == 400:
-                result = res.json() if res.text else {}
-                err_msg = result.get("error", {}).get("message", "Bad request or schema error")
-                print(f"[AI] Groq 400 Error on model {model_name}: {err_msg}")
-                last_error_msg = err_msg
-                continue
-            elif res.status_code >= 500:
-                print(f"[AI] Groq {res.status_code} Server Error on model {model_name}")
-                last_error_msg = f"Server error {res.status_code}"
-                continue
+        if res.status_code == 401:
+            print(f"[AI ERROR] Groq 401 Auth Error on model {selected_model}")
+            raise HTTPException(status_code=401, detail="Groq API authentication error: Invalid API key")
+        elif res.status_code == 403:
+            print(f"[AI ERROR] Groq 403 Permission Error on model {selected_model}")
+            raise HTTPException(status_code=403, detail="Groq API permission error")
+        elif res.status_code == 429:
+            print(f"[AI ERROR] Groq 429 Rate Limit Error on model {selected_model}")
+            raise HTTPException(status_code=429, detail="Groq API rate limit error. Please try again in a few moments.")
+        elif res.status_code == 400:
+            result = res.json() if res.text else {}
+            err_msg = result.get("error", {}).get("message", "Invalid request or model schema")
+            print(f"[AI ERROR] Groq 400 Error on model {selected_model}: {err_msg}")
+            raise HTTPException(status_code=400, detail=f"Configured Groq model error: {err_msg}")
+        elif res.status_code >= 500:
+            print(f"[AI ERROR] Groq {res.status_code} Server Error on model {selected_model}")
+            raise HTTPException(status_code=500, detail="Groq AI service error. Please try again later.")
 
-            result = res.json()
-            if "choices" in result and len(result["choices"]) > 0:
-                content = result["choices"][0]["message"]["content"] or ""
-                if "<think>" in content:
-                    content = re.sub(r'<think>[\s\S]*?</think>', '', content, flags=re.IGNORECASE).strip()
-                
-                try:
-                    return json.loads(content)
-                except json.JSONDecodeError:
-                    match = re.search(r'\{[\s\S]*\}', content)
-                    if match:
-                        return json.loads(match.group(0))
-        except HTTPException as he:
-            raise he
-        except Exception as e:
-            print(f"[AI] JSON request exception on model {model_name}: {e}")
-            last_error_msg = str(e)
+        result = res.json()
+        if "choices" in result and len(result["choices"]) > 0:
+            content = result["choices"][0]["message"]["content"] or ""
+            if "<think>" in content:
+                content = re.sub(r'<think>[\s\S]*?</think>', '', content, flags=re.IGNORECASE).strip()
+            
+            try:
+                return json.loads(content)
+            except json.JSONDecodeError:
+                match = re.search(r'\{[\s\S]*\}', content)
+                if match:
+                    return json.loads(match.group(0))
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"[AI ERROR] JSON request exception on model {selected_model}: {e}")
+        raise HTTPException(status_code=500, detail=f"Groq AI service call failed: {str(e)}")
 
-    if last_status == 429:
-        raise HTTPException(status_code=429, detail="Groq API rate limit error. Please try again in a few moments.")
-    elif last_status == 400:
-        raise HTTPException(status_code=400, detail=f"Groq API request error: {last_error_msg}")
-    elif last_status and last_status >= 500:
-        raise HTTPException(status_code=500, detail="Groq AI service error. Please try again later.")
-    else:
-        raise HTTPException(status_code=500, detail=f"Groq AI service call failed: {last_error_msg}")
+    raise HTTPException(status_code=500, detail="Failed to parse valid JSON from Groq AI response.")
 
 
 # -----------------------------------
@@ -323,7 +372,6 @@ Return JSON matching this EXACT schema:
     raise HTTPException(status_code=500, detail="AI meal generation failed to generate valid real dish names after 3 attempts.")
 
 
-# Legacy text wrapper for weekly meal plan if required
 def generate_weekly_meal_plan(family, budget: str = "Medium") -> str:
     plan_dict = generate_weekly_meal_plan_structured(family, budget)
     return json.dumps(plan_dict)

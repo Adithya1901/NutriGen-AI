@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.routes import family, member, mealplan, grocery, recipe
 from app.database import engine, Base
+from app.ai import validate_groq_startup
 import migrate
 
 Base.metadata.create_all(bind=engine)
@@ -16,6 +17,12 @@ app = FastAPI(
     description="AI Powered Family Meal Planning and Grocery Optimization Backend API",
     version="1.0.0"
 )
+
+@app.on_event("startup")
+def on_startup():
+    print("[STARTUP] Validating Groq AI Model Configuration...")
+    validate_groq_startup()
+
 
 # Enable CORS for GitHub Pages and local development
 origins = [
