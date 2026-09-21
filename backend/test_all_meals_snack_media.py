@@ -33,10 +33,25 @@ for m_type in meals_to_test:
     m = res_dict.get(m_type)
     assert m is not None, f"FAIL: Meal object for '{m_type}' is missing!"
     assert isinstance(m, dict), f"FAIL: Meal object for '{m_type}' is not a dict!"
-    assert m.get("meal_name"), f"FAIL: Meal name for '{m_type}' is empty!"
-    assert m.get("estimated_cost") > 0, f"FAIL: Estimated cost for '{m_type}' is <= 0!"
-    assert len(m.get("components", [])) > 0, f"FAIL: Components array for '{m_type}' is empty!"
-    print(f"[OK] {m_type}: '{m['meal_name']}' | Cost: INR {m['estimated_cost']} | Calories: {m['calories']} kcal | Components: {len(m['components'])}")
+    
+    # 15 Canonical Fields Validation
+    required_fields = [
+        "meal_type", "name", "description", "ingredients", "steps",
+        "prep_time", "cook_time", "servings", "calories", "protein_g",
+        "carbs_g", "fat_g", "estimated_price_inr", "image_url", "youtube_url"
+    ]
+    for field in required_fields:
+        assert field in m, f"FAIL: Field '{field}' missing from meal object for '{m_type}'!"
+
+    assert m["meal_type"] == m_type, f"FAIL: Meal type mismatch for '{m_type}'!"
+    assert m["name"], f"FAIL: Name for '{m_type}' is empty!"
+    assert isinstance(m["ingredients"], list), f"FAIL: Ingredients for '{m_type}' is not a list!"
+    assert isinstance(m["steps"], list), f"FAIL: Steps for '{m_type}' is not a list!"
+    assert isinstance(m["estimated_price_inr"], (int, float)) and m["estimated_price_inr"] > 0, f"FAIL: Price for '{m_type}' invalid!"
+    assert m["image_url"].startswith("http"), f"FAIL: Invalid image_url for '{m_type}'!"
+    assert "youtube.com/results" in m["youtube_url"], f"FAIL: Invalid youtube_url for '{m_type}'!"
+    
+    print(f"[OK] {m_type}: '{m['name']}' | Price: INR {m['estimated_price_inr']} | Calories: {m['calories']} kcal | Image: OK | YouTube: OK")
 
 print("\n================ COMPONENT MEDIA & RECIPE TEST ================")
 

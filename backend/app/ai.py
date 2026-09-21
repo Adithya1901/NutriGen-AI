@@ -14,8 +14,8 @@ GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 # CENTRAL PRODUCTION GROQ MODEL CONFIGURATION
 # Single Source of Truth
 # -----------------------------------
-DEFAULT_PRIMARY_MODEL = "openai/gpt-oss-120b"
-DEFAULT_SECONDARY_MODEL = "openai/gpt-oss-20b"
+DEFAULT_PRIMARY_MODEL = "openai/gpt-oss-20b"
+DEFAULT_SECONDARY_MODEL = "openai/gpt-oss-120b"
 
 GROQ_MODEL = os.getenv("GROQ_MODEL", DEFAULT_PRIMARY_MODEL).strip()
 
@@ -46,9 +46,10 @@ def get_groq_api_key() -> str:
         print("[AI ERROR] GROQ_API_KEY environment variable is missing.")
         raise HTTPException(
             status_code=500,
-            detail="GROQ_API_KEY is missing in backend environment"
+            detail="Groq API key is not configured. Add GROQ_API_KEY to backend/.env"
         )
     return api_key.strip()
+
 
 def fetch_active_groq_models(api_key: str) -> list:
     """Fetch active supported models dynamically from Groq Models API (GET /v1/models)."""
@@ -349,39 +350,43 @@ CANONICAL_MEALS_SCHEMA = {
         "type": "object",
         "properties": {
           "meal_type": { "type": "string" },
-          "meal_name": { "type": "string" },
+          "name": { "type": "string" },
           "description": { "type": "string" },
-          "estimated_cost": { "type": "number" },
+          "ingredients": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "steps": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "prep_time": { "type": "string" },
+          "cook_time": { "type": "string" },
+          "servings": { "type": "integer" },
           "calories": { "type": "integer" },
           "protein_g": { "type": "number" },
-          "carbohydrates_g": { "type": "number" },
+          "carbs_g": { "type": "number" },
           "fat_g": { "type": "number" },
-          "components": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "component_name": { "type": "string" },
-                "ingredients": {
-                  "type": "array",
-                  "items": { "type": "string" }
-                }
-              },
-              "required": ["component_name", "ingredients"],
-              "additionalProperties": False
-            }
-          }
+          "estimated_price_inr": { "type": "number" },
+          "image_url": { "type": "string" },
+          "youtube_url": { "type": "string" }
         },
         "required": [
           "meal_type",
-          "meal_name",
+          "name",
           "description",
-          "estimated_cost",
+          "ingredients",
+          "steps",
+          "prep_time",
+          "cook_time",
+          "servings",
           "calories",
           "protein_g",
-          "carbohydrates_g",
+          "carbs_g",
           "fat_g",
-          "components"
+          "estimated_price_inr",
+          "image_url",
+          "youtube_url"
         ],
         "additionalProperties": False
       }
@@ -390,6 +395,7 @@ CANONICAL_MEALS_SCHEMA = {
   "required": ["meals"],
   "additionalProperties": False
 }
+
 
 
 CANONICAL_RECIPE_SCHEMA = {
@@ -491,7 +497,7 @@ def normalize_meal(meal_obj: dict, requested_meal_type: str, budget: str = "Medi
     if not isinstance(meal_obj, dict):
         meal_obj = {}
 
-    meal_name = meal_obj.get("meal_name") or meal_obj.get("name") or ""
+    meal_name = str(meal_obj.get("name") or meal_obj.get("meal_name") or meal_obj.get("food_name") or "").strip()
     if not is_valid_dish_name(meal_name):
         if canonical_type == "Breakfast":
             meal_name = "Egg Bhurji with Whole Wheat Toast"
@@ -502,56 +508,94 @@ def normalize_meal(meal_obj: dict, requested_meal_type: str, budget: str = "Medi
         else:
             meal_name = "Roasted Masala Chana with Spiced Chai"
 
-    description = meal_obj.get("description") or f"Healthy {canonical_type.lower()} prepared with fresh Indian ingredients."
+    description = str(meal_obj.get("description") or f"Healthy {canonical_type.lower()} prepared with fresh Indian ingredients.")
 
-    raw_comps = meal_obj.get("components") or []
-    if not isinstance(raw_comps, list) or len(raw_comps) == 0:
-        raw_comps = [{"component_name": meal_name, "ingredients": ["Fresh local ingredients"]}]
-
-    norm_components = []
-    for idx, comp in enumerate(raw_comps):
-        if not isinstance(comp, dict):
-            comp = {"component_name": f"Component {idx + 1}"}
-        
-        c_name = comp.get("component_name") or comp.get("name") or f"Component {idx + 1}"
-        
-        raw_ing = comp.get("ingredients") or []
-        if not isinstance(raw_ing, list) or len(raw_ing) == 0:
-            raw_ing = ["Fresh main ingredients"]
-
-        norm_ing = []
+    raw_ing = meal_obj.get("ingredients") or []
+    ingredients = []
+    if isinstance(raw_ing, list):
         for ing in raw_ing:
-            if isinstance(ing, str):
-                norm_ing.append(ing.strip())
+            if isinstance(ing, str) and ing.strip():
+                ingredients.append(ing.strip())
             elif isinstance(ing, dict):
                 i_name = ing.get("name", "Ingredient")
-                i_qty = ing.get("quantity", 1)
-                i_unit = ing.get("unit", "portion")
-                norm_ing.append(f"{i_qty} {i_unit} {i_name}".strip())
-            else:
-                norm_ing.append("Fresh ingredient")
+                i_qty = ing.get("quantity", "")
+                i_unit = ing.get("unit", "")
+                ingredients.append(f"{i_qty} {i_unit} {i_name}".strip())
+    elif isinstance(raw_ing, str) and raw_ing.strip():
+        ingredients = [i.strip() for i in raw_ing.split(",") if i.strip()]
 
-        prep_steps = comp.get("preparation_steps") or []
-        if not isinstance(prep_steps, list) or len(prep_steps) == 0:
-            prep_steps = [f"Clean and chop ingredients for {c_name}.", "Measure spices and prepare cooking equipment."]
+    raw_steps = meal_obj.get("steps") or meal_obj.get("preparation_steps") or meal_obj.get("cooking_steps") or []
+    steps = []
+    if isinstance(raw_steps, list):
+        for step in raw_steps:
+            if isinstance(step, str) and step.strip():
+                steps.append(step.strip())
+            elif isinstance(step, dict):
+                s_text = step.get("description") or step.get("step") or step.get("text") or ""
+                if s_text.strip():
+                    steps.append(s_text.strip())
+    elif isinstance(raw_steps, str) and raw_steps.strip():
+        steps = [s.strip() for s in raw_steps.split(".") if s.strip()]
 
-        cook_steps = comp.get("cooking_steps") or []
-        if not isinstance(cook_steps, list) or len(cook_steps) == 0:
-            cook_steps = [f"Heat pan and add oil or ghee.", f"Sauté ingredients for {c_name} until cooked.", "Serve warm."]
+    raw_comps = meal_obj.get("components") or []
+    norm_components = []
+    if isinstance(raw_comps, list) and len(raw_comps) > 0:
+        for idx, comp in enumerate(raw_comps):
+            if not isinstance(comp, dict):
+                comp = {"name": f"Component {idx + 1}"}
+            c_name = comp.get("name") or comp.get("component_name") or f"Component {idx + 1}"
+            c_ing = comp.get("ingredients") or []
+            if not isinstance(c_ing, list):
+                c_ing = ["Fresh main ingredients"]
+            c_prep = comp.get("preparation_steps") or []
+            c_cook = comp.get("cooking_steps") or []
+            img_u, yt_q, yt_u = get_component_media(c_name)
+            norm_components.append({
+                "component_name": c_name,
+                "name": c_name,
+                "ingredients": [str(i) for i in c_ing],
+                "preparation_steps": [str(p) for p in c_prep],
+                "cooking_steps": [str(c) for c in c_cook],
+                "cooking_time_minutes": int(comp.get("cooking_time_minutes") or 15),
+                "image_url": img_u,
+                "youtube_query": yt_q,
+                "youtube_search_url": yt_u
+            })
+            if not ingredients:
+                for ing in c_ing:
+                    if isinstance(ing, str) and ing.strip():
+                        ingredients.append(ing.strip())
+            if not steps:
+                for s in c_prep + c_cook:
+                    if isinstance(s, str) and s.strip():
+                        steps.append(s.strip())
 
-        img_url, yt_q, yt_url = get_component_media(c_name)
+    if not ingredients:
+        ingredients = ["Fresh local ingredients", "Spices", "Oil or Ghee"]
 
-        norm_components.append({
-            "component_name": c_name,
-            "name": c_name,
-            "ingredients": norm_ing,
-            "preparation_steps": prep_steps,
-            "cooking_steps": cook_steps,
-            "cooking_time_minutes": int(comp.get("cooking_time_minutes") or 15),
-            "image_url": img_url,
+    if not steps:
+        steps = [f"Clean and prepare ingredients for {meal_name}.", f"Cook on medium heat with spices until tender.", "Serve hot."]
+
+    if not norm_components:
+        img_u, yt_q, yt_u = get_component_media(meal_name)
+        norm_components = [{
+            "component_name": meal_name,
+            "name": meal_name,
+            "ingredients": ingredients,
+            "preparation_steps": steps[:1],
+            "cooking_steps": steps[1:],
+            "cooking_time_minutes": 15,
+            "image_url": img_u,
             "youtube_query": yt_q,
-            "youtube_search_url": yt_url
-        })
+            "youtube_search_url": yt_u
+        }]
+
+    prep_time = str(meal_obj.get("prep_time") or "10 mins")
+    cook_time = str(meal_obj.get("cook_time") or "15 mins")
+    try:
+        servings = int(meal_obj.get("servings") or 4)
+    except (ValueError, TypeError):
+        servings = 4
 
     budget_clean = (budget or "Medium").lower()
     budget_target_map = {
@@ -559,28 +603,74 @@ def normalize_meal(meal_obj: dict, requested_meal_type: str, budget: str = "Medi
         "medium": {"Breakfast": 65.0, "Lunch": 85.0, "Dinner": 75.0, "Snacks": 35.0},
         "high": {"Breakfast": 120.0, "Lunch": 160.0, "Dinner": 150.0, "Snacks": 70.0}
     }
-    
     tier_map = budget_target_map.get(budget_clean, budget_target_map["medium"])
     target_price = tier_map.get(canonical_type, 50.0)
 
-    est_cost = float(meal_obj.get("estimated_cost") or target_price)
-    if est_cost <= 0 or est_cost > (target_price * 3.5):
-        est_cost = target_price
+    try:
+        raw_price = meal_obj.get("estimated_price_inr") or meal_obj.get("estimated_cost")
+        if raw_price is not None:
+            clean_p = re.sub(r'[^\d.]', '', str(raw_price))
+            est_price = float(clean_p) if clean_p else target_price
+        else:
+            est_price = target_price
+    except Exception:
+        est_price = target_price
 
-    calories = int(meal_obj.get("calories") or (350 if canonical_type != "Snacks" else 180))
-    protein_g = float(meal_obj.get("protein_g") or (14.0 if canonical_type != "Snacks" else 6.0))
-    carbs_g = float(meal_obj.get("carbohydrates_g") or meal_obj.get("carbs_g") or (45.0 if canonical_type != "Snacks" else 22.0))
-    fat_g = float(meal_obj.get("fat_g") or (12.0 if canonical_type != "Snacks" else 5.0))
+    if est_price <= 0 or est_price > (target_price * 3.5):
+        est_price = target_price
+
+    try:
+        calories = int(meal_obj.get("calories") or (350 if canonical_type != "Snacks" else 180))
+    except (ValueError, TypeError):
+        calories = 350 if canonical_type != "Snacks" else 180
+
+    try:
+        protein_g = float(meal_obj.get("protein_g") or (14.0 if canonical_type != "Snacks" else 6.0))
+    except (ValueError, TypeError):
+        protein_g = 14.0 if canonical_type != "Snacks" else 6.0
+
+    try:
+        carbs_g = float(meal_obj.get("carbs_g") or meal_obj.get("carbohydrates_g") or (45.0 if canonical_type != "Snacks" else 22.0))
+    except (ValueError, TypeError):
+        carbs_g = 45.0 if canonical_type != "Snacks" else 22.0
+
+    try:
+        fat_g = float(meal_obj.get("fat_g") or (12.0 if canonical_type != "Snacks" else 5.0))
+    except (ValueError, TypeError):
+        fat_g = 12.0 if canonical_type != "Snacks" else 5.0
+
+    img_url = str(meal_obj.get("image_url") or "")
+    yt_url = str(meal_obj.get("youtube_url") or "")
+
+    default_img, default_yt_q, default_yt_url = get_component_media(meal_name)
+
+    if not img_url or "example.com" in img_url:
+        img_url = default_img
+
+    if not yt_url or "example.com" in yt_url:
+        yt_url = default_yt_url
 
     return {
         "meal_type": canonical_type,
-        "meal_name": meal_name,
+        "name": meal_name,
         "description": description,
-        "estimated_cost": round(est_cost, 2),
+        "ingredients": ingredients,
+        "steps": steps,
+        "prep_time": prep_time,
+        "cook_time": cook_time,
+        "servings": servings,
         "calories": calories,
         "protein_g": round(protein_g, 1),
-        "carbohydrates_g": round(carbs_g, 1),
+        "carbs_g": round(carbs_g, 1),
         "fat_g": round(fat_g, 1),
+        "estimated_price_inr": round(est_price, 2),
+        "image_url": img_url,
+        "youtube_url": yt_url,
+
+        # Aliases for backwards compatibility with any existing components
+        "meal_name": meal_name,
+        "estimated_cost": round(est_price, 2),
+        "carbohydrates_g": round(carbs_g, 1),
         "components": norm_components
     }
 
