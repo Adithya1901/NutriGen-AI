@@ -393,42 +393,80 @@ function Recipes() {
                 </div>
 
                 {/* Multi-Component Recipe Cards */}
-                {r.components.map((comp, cIdx) => (
-                  <div key={cIdx} className="card daily-plan-card" style={{ padding: "25px", borderTop: "4px solid #38bdf8" }}>
-                    <h3 style={{ color: "#38bdf8", marginTop: 0, marginBottom: "20px", fontSize: "1.4rem" }}>
-                      Component {cIdx + 1}: {comp.name}
-                    </h3>
+                {r.components.map((comp, cIdx) => {
+                  const compName = comp.name || comp.component_name || `Component ${cIdx + 1}`;
+                  const compImage = comp.image_url || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=800&q=80";
+                  const compYtUrl = comp.youtube_search_url || comp.youtube_url || `https://www.youtube.com/results?search_query=${encodeURIComponent(compName + " recipe")}`;
 
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "20px" }}>
+                  return (
+                    <div key={cIdx} className="card daily-plan-card" style={{ padding: "25px", borderTop: "4px solid #38bdf8" }}>
                       
-                      {/* Component Ingredients */}
-                      {comp.ingredients && comp.ingredients.length > 0 && (
-                        <div>
-                          <h4 style={{ color: "#f59e0b", marginBottom: "12px" }}>🌿 Ingredients</h4>
-                          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                            {comp.ingredients.map((ing, iIdx) => {
-                              const ingId = `comp-${cIdx}-ing-${iIdx}`;
-                              const isChecked = !!checkedIngredients[ingId];
-
-                              return (
-                                <div 
-                                  key={iIdx}
-                                  className={`grocery-item-row ${isChecked ? 'checked' : ''}`}
-                                  onClick={() => toggleIngredient(ingId)}
-                                  style={{ cursor: "pointer", margin: 0 }}
-                                >
-                                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                                    <input type="checkbox" checked={isChecked} onChange={() => {}} className="custom-checkbox" />
-                                    <span style={{ color: isChecked ? "#64748b" : "#f8fafc" }}>
-                                      {ing.quantity && <strong style={{ color: "#f59e0b", marginRight: "4px" }}>{ing.quantity} {ing.unit}</strong>} {ing.name}
-                                    </span>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
+                      {/* Component Header with Media */}
+                      <div style={{ display: "flex", gap: "20px", alignItems: "center", flexWrap: "wrap", marginBottom: "22px" }}>
+                        <img 
+                          src={compImage} 
+                          alt={compName} 
+                          style={{ width: "160px", height: "110px", objectFit: "cover", borderRadius: "12px", border: "2px solid rgba(56, 189, 248, 0.3)" }} 
+                        />
+                        <div style={{ flex: 1, minWidth: "220px" }}>
+                          <h3 style={{ color: "#38bdf8", marginTop: 0, marginBottom: "8px", fontSize: "1.35rem" }}>
+                            Component {cIdx + 1}: {compName}
+                          </h3>
+                          <a 
+                            href={compYtUrl} 
+                            target="_blank" 
+                            rel="noreferrer" 
+                            style={{ 
+                              display: "inline-flex", 
+                              alignItems: "center", 
+                              gap: "8px", 
+                              background: "linear-gradient(135deg, #ef4444, #dc2626)", 
+                              color: "white", 
+                              padding: "8px 16px", 
+                              borderRadius: "10px", 
+                              textDecoration: "none", 
+                              fontWeight: "bold",
+                              fontSize: "0.85rem",
+                              boxShadow: "0 4px 12px rgba(239, 68, 68, 0.3)"
+                            }}
+                          >
+                            ▶ Watch {compName} Recipe on YouTube
+                          </a>
                         </div>
-                      )}
+                      </div>
+
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "20px" }}>
+                        
+                        {/* Component Ingredients */}
+                        {comp.ingredients && comp.ingredients.length > 0 && (
+                          <div>
+                            <h4 style={{ color: "#f59e0b", marginBottom: "12px" }}>🌿 Ingredients</h4>
+                            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                              {comp.ingredients.map((ing, iIdx) => {
+                                const ingId = `comp-${cIdx}-ing-${iIdx}`;
+                                const isChecked = !!checkedIngredients[ingId];
+                                const ingText = typeof ing === 'string' ? ing : `${ing.quantity || ''} ${ing.unit || ''} ${ing.name || ''}`.trim();
+
+                                return (
+                                  <div 
+                                    key={iIdx}
+                                    className={`grocery-item-row ${isChecked ? 'checked' : ''}`}
+                                    onClick={() => toggleIngredient(ingId)}
+                                    style={{ cursor: "pointer", margin: 0 }}
+                                  >
+                                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                                      <input type="checkbox" checked={isChecked} onChange={() => {}} className="custom-checkbox" />
+                                      <span style={{ color: isChecked ? "#64748b" : "#f8fafc" }}>
+                                        {ingText}
+                                      </span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
 
                       {/* Component Prep Steps */}
                       {comp.preparation_steps && comp.preparation_steps.length > 0 && (
@@ -479,9 +517,12 @@ function Recipes() {
                         </div>
                       </div>
                     )}
-
                   </div>
-                ))}
+                );
+              })}
+
+
+
 
                 {/* Overall Nutrition Card */}
                 {r.nutrition && (

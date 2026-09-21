@@ -91,10 +91,9 @@ def create_multi_daily_plan(id: int, req: schemas.MultiDailyPlanRequest):
                 for meal_type in missing_meals:
                     meal_obj = res_meals.get(meal_type) or res_meals.get(meal_type.lower()) or res_meals.get(meal_type.capitalize())
                     if not meal_obj or not isinstance(meal_obj, dict):
-                        raise HTTPException(
-                            status_code=500,
-                            detail=f"AI meal generation returned incomplete meal object for '{meal_type}'"
-                        )
+                        from app.ai import normalize_meal
+                        meal_obj = normalize_meal({}, meal_type, req.budget or "Medium")
+                    
                     plan_content = json.dumps(meal_obj)
                     plan = DailyPlan(
                         family_id=family.id,
@@ -105,6 +104,7 @@ def create_multi_daily_plan(id: int, req: schemas.MultiDailyPlanRequest):
                     db.add(plan)
                 
                 db.commit()
+
             
             final_plans_for_date = db.query(DailyPlan).filter(
                 DailyPlan.family_id == id,
