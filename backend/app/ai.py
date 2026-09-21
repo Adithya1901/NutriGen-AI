@@ -43,11 +43,8 @@ BUDGET_LIMITS = {
 def get_groq_api_key() -> str:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key or not api_key.strip():
-        print("[AI ERROR] GROQ_API_KEY environment variable is missing.")
-        raise HTTPException(
-            status_code=500,
-            detail="Groq API key is not configured. Add GROQ_API_KEY to backend/.env"
-        )
+        print("[AI NOTICE] GROQ_API_KEY is not configured in backend/.env. Add GROQ_API_KEY for live AI generation.")
+        return ""
     return api_key.strip()
 
 
@@ -147,6 +144,8 @@ def is_valid_dish_name(name: str) -> bool:
 # -----------------------------------
 def ask_groq(prompt: str, system_prompt: str = None) -> str:
     api_key = get_groq_api_key()
+    if not api_key:
+        raise ValueError("GROQ_API_KEY environment variable is missing. Add GROQ_API_KEY to backend/.env")
     selected_model = get_selected_groq_model()
 
     headers = {
@@ -198,6 +197,8 @@ def ask_groq(prompt: str, system_prompt: str = None) -> str:
 def ask_groq_structured_schema(prompt: str, system_prompt: str, schema_name: str, schema_dict: dict) -> dict:
     """Executes Groq API call enforcing strict JSON Schema response format."""
     api_key = get_groq_api_key()
+    if not api_key:
+        raise ValueError("GROQ_API_KEY environment variable is missing. Add GROQ_API_KEY to backend/.env")
     selected_model = get_selected_groq_model()
 
     headers = {
