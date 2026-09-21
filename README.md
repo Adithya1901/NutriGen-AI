@@ -3,6 +3,9 @@
 NutriGen AI is an AI-powered full-stack web application that generates personalized weekly meal plans and smart grocery lists for families based on their health conditions, dietary preferences, and nutritional requirements.
 
 The system leverages Artificial Intelligence to recommend balanced Indian meals while automatically creating a consolidated grocery list, helping families maintain healthier lifestyles and simplify meal planning.
+## 🚀 Live Demo
+
+👉 **[Open NutriGen AI](https://adithya1901.github.io/NutriGen-AI/)**
 
 ---
 
