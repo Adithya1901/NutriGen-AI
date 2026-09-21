@@ -25,14 +25,12 @@ def get_recipe(id: int, date: str, meal_type: str, language: str = "English"):
             raise HTTPException(status_code=404, detail="Meal plan not generated for this date and meal time.")
 
         # Using AI to generate recipe based on the generated meal plan text
-        meal_description = daily_plan.plan_text
-
-        prompt_meal = f"{meal_type} ({meal_description})"
+        meal_description = daily_plan.plan_text.strip() if daily_plan.plan_text else meal_type
         
-        recipe_text = generate_recipe(date, prompt_meal, language)
+        recipe_data = generate_recipe(meal_description, meal_type, language)
 
         return {
-            "recipe": recipe_text,
+            "recipe": recipe_data,
             "meal_description": meal_description
         }
     finally:

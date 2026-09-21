@@ -9,7 +9,7 @@ function Recipes() {
   const [selectedMealType, setSelectedMealType] = useState("Breakfast");
   const [selectedLanguage, setSelectedLanguage] = useState("English");
   
-  const [recipe, setRecipe] = useState("");
+  const [recipe, setRecipe] = useState(null);
   const [mealDescription, setMealDescription] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -74,7 +74,7 @@ function Recipes() {
     }
     
     setLoading(true);
-    setRecipe("");
+    setRecipe(null);
     setMealDescription("");
     setError("");
     setCheckedIngredients({});
@@ -89,7 +89,7 @@ function Recipes() {
         }
       });
       setRecipe(res.data.recipe);
-      setMealDescription(res.data.meal_description);
+      setMealDescription(res.data.meal_description || "");
 
       setTimeout(() => {
         const recipeElement = document.getElementById("generated-recipe-section");
@@ -102,7 +102,7 @@ function Recipes() {
       if (err.response && err.response.data && err.response.data.detail) {
         setError(err.response.data.detail);
       } else {
-        setError(err.message || "Failed to fetch recipe. Make sure the meal plan is generated for this date and time.");
+        setError("Recipe generation failed. Please try again.");
       }
     } finally {
       setLoading(false);
@@ -117,98 +117,77 @@ function Recipes() {
     setCompletedSteps(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const parseRecipeContent = (rawText) => {
-    if (!rawText) return [];
+  const getParsedRecipe = () => {
+    if (!recipe) return null;
 
-    const blocks = rawText.split(/(?=Meal Item Name:|\n---+\n)/i).filter(b => b.trim());
+    let data = recipe;
+    if (typeof data === "string") {
+      try {
+        data = JSON.parse(data);
+      } catch (e) {
+        data = null;
+      }
+    }
 
-    const parsedDishes = blocks.map((block, bIdx) => {
-      const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
-
-      let name = "";
-      let ytLink = "";
-      let prepGuide = "";
-      let cookingTime = "";
-      let specialTips = "";
-      let ingredients = [];
-      let steps = [];
-
-      let currentSection = "";
-
-      lines.forEach((line) => {
-        const nameMatch = line.match(/^Meal Item Name:\s*(.*)/i);
-        if (nameMatch) {
-          name = nameMatch[1].replace(/\[|\]/g, '').trim();
-          return;
-        }
-
-        const ytMatch = line.match(/^YouTube Video Search Link:\s*(https?:\/\/[^\s]+)/i);
-        if (ytMatch) {
-          ytLink = ytMatch[1];
-          return;
-        }
-
-        if (line.match(/^Ingredients:/i)) {
-          currentSection = "ingredients";
-          return;
-        }
-        if (line.match(/^(Preparation Guide|Prep Guide|Brief Preparation)/i)) {
-          currentSection = "prep";
-          return;
-        }
-        if (line.match(/^(Step-By-Step Cooking|Step By Step|Cooking Steps|Steps)/i)) {
-          currentSection = "steps";
-          return;
-        }
-        if (line.match(/^Cooking Time:\s*(.*)/i)) {
-          cookingTime = line.replace(/^Cooking Time:\s*/i, '').replace(/\[|\]/g, '').trim();
-          currentSection = "";
-          return;
-        }
-        if (line.match(/^Special Tips:\s*(.*)/i)) {
-          specialTips = line.replace(/^Special Tips:\s*/i, '').replace(/\[|\]/g, '').trim();
-          currentSection = "";
-          return;
-        }
-
-        if (currentSection === "ingredients") {
-          let item = line.replace(/^[\-\*\•]\s*/, '').trim();
-          if (item) ingredients.push(item);
-        } else if (currentSection === "prep") {
-          prepGuide += (prepGuide ? " " : "") + line;
-        } else if (currentSection === "steps" || line.match(/^Step\s+\d+:/i)) {
-          const stepMatch = line.match(/^Step\s+(\d+):?\s*(.*)/i);
-          if (stepMatch) {
-            steps.push({
-              num: stepMatch[1],
-              text: stepMatch[2]
-            });
-          } else if (steps.length > 0) {
-            steps[steps.length - 1].text += " " + line;
-          }
-        }
-      });
-
-      if (!name) {
-        name = mealDescription ? mealDescription.replace(/^[\-\*\•]\s*/, '') : "Recipe Item";
+    if (data && typeof data === "object") {
+      let rName = data.recipe_name || data.name || mealDescription || "Nutritious Recipe";
+      const genericNames = ["breakfast", "lunch", "dinner", "snack", "snacks", "nutritious healthy meal", "healthy meal"];
+      if (genericNames.includes(String(rName).trim().toLowerCase())) {
+        rName = (mealDescription && !genericNames.includes(String(mealDescription).trim().toLowerCase())) 
+          ? mealDescription 
+          : `${selectedMealType} Dish`;
       }
 
-      return {
-        id: `dish-${bIdx}`,
-        name,
-        ytLink,
-        ingredients,
-        prepGuide,
-        steps,
-        cookingTime: cookingTime || "15 - 20 mins",
-        specialTips
-      };
-    });
+      const ytQuery = data.youtube_search_query || `${rName} recipe in ${selectedLanguage}`;
+      const ytUrl = data.youtube_url || `https://www.youtube.com/results?search_query=${encodeURIComponent(ytQuery)}`;
 
-    return parsedDishes.filter(d => d.ingredients.length > 0 || d.steps.length > 0 || d.name);
+      const ingredients = Array.isArray(data.ingredients)
+        ? data.ingredients.map(ing => {
+            if (typeof ing === "object" && ing !== null) {
+              return {
+                name: ing.name || "Ingredient",
+                quantity: ing.quantity || "",
+                unit: ing.unit || ""
+              };
+            }
+            return { name: String(ing), quantity: "", unit: "" };
+          })
+        : [];
+
+      const prepSteps = Array.isArray(data.preparation_steps)
+        ? data.preparation_steps
+        : (data.preparation_steps ? [String(data.preparation_steps)] : []);
+
+      const cookSteps = Array.isArray(data.cooking_steps)
+        ? data.cooking_steps
+        : (data.cooking_steps ? [String(data.cooking_steps)] : []);
+
+      const nutrition = data.nutrition || {
+        calories: "250 kcal",
+        protein: "12g",
+        carbohydrates: "30g",
+        fat: "8g"
+      };
+
+      return {
+        recipe_name: rName,
+        meal_type: data.meal_type || selectedMealType,
+        description: data.description || "",
+        servings: data.servings || 2,
+        cooking_time_minutes: data.cooking_time_minutes || 25,
+        ingredients,
+        preparation_steps: prepSteps,
+        cooking_steps: cookSteps,
+        nutrition,
+        youtube_url: ytUrl,
+        youtube_search_query: ytQuery
+      };
+    }
+
+    return null;
   };
 
-  const dishes = parseRecipeContent(recipe);
+  const parsedRecipe = getParsedRecipe();
   const currentTime = new Date().toLocaleString();
 
   return (
@@ -320,13 +299,14 @@ function Recipes() {
       )}
 
       {/* Recipe Rendering Section */}
-      {dishes.length > 0 && (
-        <div id="generated-recipe-section" style={{ marginTop: "30px", display: "flex", flexDirection: "column", gap: "40px" }}>
-          {dishes.map((dish, dIdx) => {
-            const imagePrompt = `Photorealistic delicious finished dish of ${dish.name}, professional culinary food photography, bright lighting, appetizing 8k`;
+      {parsedRecipe && (
+        <div id="generated-recipe-section" style={{ marginTop: "30px", display: "flex", flexDirection: "column", gap: "30px" }}>
+          {(() => {
+            const r = parsedRecipe;
+            const imagePrompt = `Photorealistic delicious finished dish of ${r.recipe_name}, professional culinary food photography, bright lighting, appetizing 8k`;
 
             return (
-              <div key={dIdx} className="anim-fade-in" style={{ display: "flex", flexDirection: "column", gap: "25px" }}>
+              <div className="anim-fade-in" style={{ display: "flex", flexDirection: "column", gap: "25px" }}>
                 
                 {/* Hero Dish Banner Card */}
                 <div className="card daily-plan-card" style={{ padding: "30px", borderTop: "4px solid #10b981" }}>
@@ -336,7 +316,7 @@ function Recipes() {
                     <div style={{ flex: "1 1 320px", maxWidth: "420px", borderRadius: "16px", overflow: "hidden", boxShadow: "0 10px 30px rgba(0,0,0,0.5)", border: "1px solid rgba(255,255,255,0.1)", position: "relative" }}>
                       <img 
                         src={`https://image.pollinations.ai/prompt/${encodeURIComponent(imagePrompt)}?width=420&height=280&nologo=true`} 
-                        alt={dish.name}
+                        alt={r.recipe_name}
                         style={{ width: "100%", height: "260px", objectFit: "cover", display: "block" }}
                       />
                       <span style={{ position: "absolute", bottom: "12px", right: "12px", background: "rgba(15,23,42,0.85)", backdropFilter: "blur(8px)", color: "#34d399", padding: "4px 12px", borderRadius: "12px", fontSize: "0.8em", fontWeight: "600", border: "1px solid rgba(16,185,129,0.3)" }}>
@@ -346,14 +326,23 @@ function Recipes() {
 
                     {/* Dish Info & Stats */}
                     <div style={{ flex: "1 1 340px", display: "flex", flexDirection: "column", gap: "15px" }}>
-                      <h2 style={{ color: "#f8fafc", fontSize: "2rem", margin: 0, fontWeight: "700", lineHeight: "1.3" }}>
-                        🍽️ {dish.name}
+                      <h2 style={{ color: "#f8fafc", fontSize: "2.2rem", margin: 0, fontWeight: "700", lineHeight: "1.3" }}>
+                        🍽️ {r.recipe_name}
                       </h2>
+
+                      {r.description && (
+                        <p style={{ color: "#cbd5e1", fontSize: "1.05rem", lineHeight: "1.6", margin: 0 }}>
+                          {r.description}
+                        </p>
+                      )}
 
                       {/* Stat Badges */}
                       <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", marginTop: "5px" }}>
                         <div style={{ background: "rgba(56, 189, 248, 0.12)", border: "1px solid rgba(56, 189, 248, 0.3)", padding: "6px 14px", borderRadius: "12px", color: "#38bdf8", fontSize: "0.9rem", fontWeight: "600" }}>
-                          ⏱️ Cooking Time: {dish.cookingTime}
+                          ⏱️ Cooking Time: {r.cooking_time_minutes} mins
+                        </div>
+                        <div style={{ background: "rgba(16, 185, 129, 0.12)", border: "1px solid rgba(16, 185, 129, 0.3)", padding: "6px 14px", borderRadius: "12px", color: "#34d399", fontSize: "0.9rem", fontWeight: "600" }}>
+                          👨‍👩‍👧 Servings: {r.servings}
                         </div>
                         <div style={{ background: "rgba(168, 85, 247, 0.12)", border: "1px solid rgba(168, 85, 247, 0.3)", padding: "6px 14px", borderRadius: "12px", color: "#c084fc", fontSize: "0.9rem", fontWeight: "600" }}>
                           🌐 Language: {selectedLanguage}
@@ -361,10 +350,10 @@ function Recipes() {
                       </div>
 
                       {/* YouTube Video Link */}
-                      {dish.ytLink && (
+                      {r.youtube_url && (
                         <div style={{ marginTop: "10px" }}>
                           <a 
-                            href={dish.ytLink} 
+                            href={r.youtube_url} 
                             target="_blank" 
                             rel="noreferrer" 
                             style={{ 
@@ -381,7 +370,7 @@ function Recipes() {
                               transition: "transform 0.2s ease"
                             }}
                           >
-                            ▶️ Watch Video Tutorial on YouTube ({selectedLanguage})
+                            ▶ Watch Video Tutorial on YouTube
                           </a>
                         </div>
                       )}
@@ -389,18 +378,18 @@ function Recipes() {
                   </div>
                 </div>
 
-                {/* Grid for Ingredients & Chef Prep */}
+                {/* Grid for Ingredients & Preparation */}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: "25px" }}>
                   
                   {/* Ingredients Section */}
-                  {dish.ingredients.length > 0 && (
+                  {r.ingredients.length > 0 && (
                     <div className="card daily-plan-card" style={{ padding: "25px" }}>
                       <h3 style={{ color: "#f59e0b", marginTop: 0, marginBottom: "18px", fontSize: "1.25rem", display: "flex", alignItems: "center", gap: "10px" }}>
                         🌿 Measure & Prepare Ingredients
                       </h3>
                       <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                        {dish.ingredients.map((ing, iIdx) => {
-                          const ingId = `${dish.id}-ing-${iIdx}`;
+                        {r.ingredients.map((ing, iIdx) => {
+                          const ingId = `recipe-ing-${iIdx}`;
                           const isChecked = !!checkedIngredients[ingId];
 
                           return (
@@ -418,7 +407,7 @@ function Recipes() {
                                   className="custom-checkbox"
                                 />
                                 <span className="item-name" style={{ color: isChecked ? "#64748b" : "#f8fafc", fontWeight: "500" }}>
-                                  {ing}
+                                  {ing.quantity && <strong style={{ color: "#f59e0b", marginRight: "4px" }}>{ing.quantity} {ing.unit}</strong>} {ing.name}
                                 </span>
                               </div>
                             </div>
@@ -428,28 +417,33 @@ function Recipes() {
                     </div>
                   )}
 
-                  {/* Chef Prep Guide */}
-                  {dish.prepGuide && (
+                  {/* Preparation Steps */}
+                  {r.preparation_steps.length > 0 && (
                     <div className="card daily-plan-card" style={{ padding: "25px" }}>
-                      <h3 style={{ color: "#38bdf8", marginTop: 0, marginBottom: "15px", fontSize: "1.25rem", display: "flex", alignItems: "center", gap: "10px" }}>
+                      <h3 style={{ color: "#38bdf8", marginTop: 0, marginBottom: "18px", fontSize: "1.25rem", display: "flex", alignItems: "center", gap: "10px" }}>
                         🔪 Chef's Preparation Guide
                       </h3>
-                      <div style={{ background: "rgba(14, 165, 233, 0.08)", borderLeft: "4px solid #38bdf8", padding: "18px", borderRadius: "0 12px 12px 0", color: "#e2e8f0", lineHeight: "1.6", fontSize: "1.05rem" }}>
-                        {dish.prepGuide}
+                      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                        {r.preparation_steps.map((pStep, pIdx) => (
+                          <div key={pIdx} style={{ display: "flex", gap: "12px", background: "rgba(14, 165, 233, 0.06)", borderLeft: "3px solid #38bdf8", padding: "12px 16px", borderRadius: "0 10px 10px 0" }}>
+                            <strong style={{ color: "#38bdf8", minWidth: "24px" }}>{pIdx + 1}.</strong>
+                            <span style={{ color: "#e2e8f0", lineHeight: "1.5" }}>{pStep}</span>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   )}
                 </div>
 
                 {/* Step-by-Step Cooking Instructions */}
-                {dish.steps.length > 0 && (
+                {r.cooking_steps.length > 0 && (
                   <div className="card daily-plan-card" style={{ padding: "30px" }}>
                     <h3 style={{ color: "#38bdf8", marginTop: 0, marginBottom: "25px", fontSize: "1.35rem", display: "flex", alignItems: "center", gap: "10px" }}>
                       🔥 Step-By-Step Cooking Guide
                     </h3>
                     <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
-                      {dish.steps.map((step, sIdx) => {
-                        const stepId = `${dish.id}-step-${sIdx}`;
+                      {r.cooking_steps.map((cStep, sIdx) => {
+                        const stepId = `recipe-step-${sIdx}`;
                         const isDone = !!completedSteps[stepId];
 
                         return (
@@ -468,14 +462,14 @@ function Recipes() {
                           >
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
                               <strong style={{ color: isDone ? "#34d399" : "#3b82f6", fontSize: "1.1rem", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                                {isDone ? "✓ STEP " + step.num + " COMPLETED" : "STEP " + step.num}
+                                {isDone ? `✓ STEP ${sIdx + 1} COMPLETED` : `STEP ${sIdx + 1}`}
                               </strong>
                               <span style={{ fontSize: "0.8em", color: isDone ? "#34d399" : "#64748b", background: isDone ? "rgba(16,185,129,0.15)" : "rgba(51, 65, 85, 0.4)", padding: "3px 10px", borderRadius: "10px" }}>
                                 {isDone ? "Done" : "Tap to complete"}
                               </span>
                             </div>
                             <p style={{ margin: 0, color: isDone ? "#94a3b8" : "#f8fafc", fontSize: "1.08rem", lineHeight: "1.6", textDecoration: isDone ? "line-through" : "none" }}>
-                              {step.text}
+                              {cStep}
                             </p>
                           </div>
                         );
@@ -484,21 +478,36 @@ function Recipes() {
                   </div>
                 )}
 
-                {/* Special Tips Card */}
-                {dish.specialTips && (
-                  <div className="card daily-plan-card" style={{ padding: "22px", background: "linear-gradient(135deg, rgba(245, 158, 11, 0.1), rgba(217, 119, 6, 0.05))", border: "1px solid rgba(245, 158, 11, 0.3)", borderLeft: "5px solid #f59e0b" }}>
-                    <h4 style={{ color: "#f59e0b", margin: "0 0 8px 0", fontSize: "1.1rem", display: "flex", alignItems: "center", gap: "8px" }}>
-                      💡 Chef's Pro Tip
-                    </h4>
-                    <p style={{ margin: 0, color: "#fef3c7", fontSize: "1.02rem", lineHeight: "1.5" }}>
-                      {dish.specialTips}
-                    </p>
+                {/* Nutrition Card */}
+                {r.nutrition && (
+                  <div className="card daily-plan-card" style={{ padding: "25px", borderTop: "4px solid #a855f7" }}>
+                    <h3 style={{ color: "#c084fc", marginTop: 0, marginBottom: "20px", fontSize: "1.25rem", display: "flex", alignItems: "center", gap: "10px" }}>
+                      📊 Nutritional Values (per serving)
+                    </h3>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "15px" }}>
+                      <div style={{ background: "rgba(168, 85, 247, 0.1)", border: "1px solid rgba(168, 85, 247, 0.3)", padding: "16px", borderRadius: "12px", textAlign: "center" }}>
+                        <div style={{ color: "#94a3b8", fontSize: "0.85rem", textTransform: "uppercase", fontWeight: "600" }}>Calories</div>
+                        <div style={{ color: "#c084fc", fontSize: "1.3rem", fontWeight: "700", marginTop: "4px" }}>{r.nutrition.calories || "N/A"}</div>
+                      </div>
+                      <div style={{ background: "rgba(56, 189, 248, 0.1)", border: "1px solid rgba(56, 189, 248, 0.3)", padding: "16px", borderRadius: "12px", textAlign: "center" }}>
+                        <div style={{ color: "#94a3b8", fontSize: "0.85rem", textTransform: "uppercase", fontWeight: "600" }}>Protein</div>
+                        <div style={{ color: "#38bdf8", fontSize: "1.3rem", fontWeight: "700", marginTop: "4px" }}>{r.nutrition.protein || "N/A"}</div>
+                      </div>
+                      <div style={{ background: "rgba(245, 158, 11, 0.1)", border: "1px solid rgba(245, 158, 11, 0.3)", padding: "16px", borderRadius: "12px", textAlign: "center" }}>
+                        <div style={{ color: "#94a3b8", fontSize: "0.85rem", textTransform: "uppercase", fontWeight: "600" }}>Carbs</div>
+                        <div style={{ color: "#f59e0b", fontSize: "1.3rem", fontWeight: "700", marginTop: "4px" }}>{r.nutrition.carbohydrates || "N/A"}</div>
+                      </div>
+                      <div style={{ background: "rgba(239, 68, 68, 0.1)", border: "1px solid rgba(239, 68, 68, 0.3)", padding: "16px", borderRadius: "12px", textAlign: "center" }}>
+                        <div style={{ color: "#94a3b8", fontSize: "0.85rem", textTransform: "uppercase", fontWeight: "600" }}>Fat</div>
+                        <div style={{ color: "#fca5a5", fontSize: "1.3rem", fontWeight: "700", marginTop: "4px" }}>{r.nutrition.fat || "N/A"}</div>
+                      </div>
+                    </div>
                   </div>
                 )}
 
               </div>
             );
-          })}
+          })()}
         </div>
       )}
     </div>

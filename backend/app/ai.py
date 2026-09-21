@@ -1,6 +1,8 @@
 import os
 import requests
 import re
+import json
+import urllib.parse
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -18,7 +20,7 @@ FALLBACK_MODELS = [
 
 
 # -----------------------------------
-# CORE GROQ FUNCTION
+# CORE GROQ FUNCTION (TEXT)
 # -----------------------------------
 def ask_groq(prompt):
     api_key = os.getenv("GROQ_API_KEY")
@@ -82,6 +84,111 @@ def ask_groq(prompt):
             last_error = str(e)
 
     return None
+
+
+# -----------------------------------
+# GROQ STRUCTURED JSON FUNCTION
+# -----------------------------------
+def ask_groq_json(prompt, system_prompt=None):
+    api_key = os.getenv("GROQ_API_KEY")
+
+    if not api_key:
+        print("[AI] GROQ_API_KEY environment variable is missing.")
+        return None
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
+    for model_name in FALLBACK_MODELS:
+        data = {
+            "model": model_name,
+            "messages": messages,
+            "temperature": 0.4,
+            "max_tokens": 4096,
+            "response_format": {"type": "json_object"}
+        }
+
+        try:
+            response = requests.post(
+                GROQ_URL,
+                headers=headers,
+                json=data,
+                timeout=60
+            )
+
+            result = response.json()
+
+            if "choices" in result and len(result["choices"]) > 0:
+                content = result["choices"][0]["message"]["content"] or ""
+                if "<think>" in content:
+                    content = re.sub(r'<think>[\s\S]*?</think>', '', content, flags=re.IGNORECASE).strip()
+                
+                try:
+                    parsed = json.loads(content)
+                    return parsed
+                except json.JSONDecodeError as e:
+                    print(f"[AI] Failed to decode JSON from model {model_name}: {e}")
+                    match = re.search(r'\{[\s\S]*\}', content)
+                    if match:
+                        try:
+                            return json.loads(match.group(0))
+                        except Exception:
+                            pass
+                    continue
+
+            if "error" in result:
+                message = result["error"].get("message", str(result["error"]))
+                print(f"[AI] Groq JSON error on model {model_name}: {message}")
+                if "does not exist" in message.lower() or "access to it" in message.lower() or "response_format" in message.lower():
+                    continue
+                break
+
+        except Exception as e:
+            print(f"[AI] Request exception on model {model_name}: {e}")
+
+    return None
+
+
+# -----------------------------------
+# YOUTUBE SEARCH URL / API HELPER
+# -----------------------------------
+def get_youtube_url(query):
+    query_str = str(query or "").strip()
+    if not query_str:
+        query_str = "healthy recipe"
+    
+    youtube_api_key = os.getenv("YOUTUBE_API_KEY")
+    if youtube_api_key:
+        try:
+            yt_url = "https://www.googleapis.com/youtube/v3/search"
+            params = {
+                "part": "snippet",
+                "maxResults": 1,
+                "q": query_str,
+                "type": "video",
+                "key": youtube_api_key
+            }
+            res = requests.get(yt_url, params=params, timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                items = data.get("items", [])
+                if items and len(items) > 0:
+                    video_id = items[0]["id"].get("videoId")
+                    if video_id:
+                        return f"https://www.youtube.com/watch?v={video_id}"
+        except Exception as e:
+            print(f"[AI] YouTube API Search failed: {e}")
+
+    encoded_query = urllib.parse.quote_plus(query_str)
+    return f"https://www.youtube.com/results?search_query={encoded_query}"
+
 
 
 # -----------------------------------
@@ -241,70 +348,319 @@ Estimated Total Cost: ₹{575 * qty_multiplier}"""
 
 
 # -----------------------------------
-# DAILY RECIPE
+# STRUCTURED RECIPE FALLBACK HELPER
 # -----------------------------------
-def generate_recipe(day, meal, language="English"):
+def get_fallback_structured_recipe(dish_name="Vegetable Masala Omelette", meal_type="Breakfast", language="English"):
+    clean_name = str(dish_name or "Nutritious Indian Meal").strip()
+    
+    # Strip any date or generic prefix if accidentally passed
+    if re.match(r'^\d{4}-\d{2}-\d{2}$', clean_name) or clean_name in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]:
+        clean_name = str(meal_type or "Vegetable Masala Omelette").strip()
+
+    # Filter out generic names if passed by accident
+    if clean_name.lower() in ["breakfast", "lunch", "dinner", "snack", "snacks", "nutritious healthy meal", "healthy meal"]:
+        m_lower = str(meal_type or "").lower()
+        if "lunch" in m_lower:
+            clean_name = "Vegetable Biryani"
+        elif "dinner" in m_lower:
+            clean_name = "Paneer Tikka Masala"
+        elif "snack" in m_lower:
+            clean_name = "Vegetable Sandwich"
+        else:
+            clean_name = "Vegetable Masala Omelette"
+
+    lower_name = clean_name.lower()
+
+    if "omelette" in lower_name or "egg" in lower_name:
+        return {
+            "recipe_name": clean_name if clean_name else "Vegetable Masala Omelette",
+            "meal_type": meal_type or "Breakfast",
+            "description": f"A classic, protein-packed Indian style masala omelette loaded with fresh vegetables and aromatic spices.",
+            "servings": 2,
+            "cooking_time_minutes": 15,
+            "ingredients": [
+                {"name": "Eggs", "quantity": "4", "unit": "large"},
+                {"name": "Onion", "quantity": "1", "unit": "medium, finely chopped"},
+                {"name": "Tomato", "quantity": "1", "unit": "medium, finely chopped"},
+                {"name": "Green Chilli", "quantity": "1", "unit": "finely chopped"},
+                {"name": "Fresh Coriander", "quantity": "2", "unit": "tbsp chopped"},
+                {"name": "Turmeric Powder", "quantity": "1/4", "unit": "tsp"},
+                {"name": "Red Chilli Powder", "quantity": "1/4", "unit": "tsp"},
+                {"name": "Salt", "quantity": "1/2", "unit": "tsp or to taste"},
+                {"name": "Butter or Oil", "quantity": "1", "unit": "tbsp"}
+            ],
+            "preparation_steps": [
+                "Wash all fresh vegetables thoroughly under clean running water.",
+                "Finely chop the onion, tomato, green chilli, and fresh coriander leaves.",
+                "Crack 4 large eggs into a clean mixing bowl.",
+                "Add salt, turmeric powder, and red chilli powder to the bowl.",
+                "Whisk vigorously using a fork or whisk for 1-2 minutes until light and frothy.",
+                "Fold the chopped onion, tomato, green chilli, and coriander into the egg mixture."
+            ],
+            "cooking_steps": [
+                "Place a non-stick frying pan or tawa over medium heat and melt 1 tbsp of butter or oil.",
+                "Tilt the pan to coat the surface evenly with melted butter.",
+                "Pour the whisked egg and vegetable mixture into the center of the hot pan.",
+                "Swirl the pan gently to spread the eggs into an even circle.",
+                "Cook on medium flame for 2–3 minutes until the edges set and the bottom turns golden brown.",
+                "Carefully insert a spatula under the omelette and flip it over.",
+                "Cook the reverse side for an additional 1–2 minutes until set and cooked through.",
+                "Fold the omelette in half and transfer to a serving plate.",
+                "Serve hot with toasted whole wheat bread or mint chutney."
+            ],
+            "nutrition": {
+                "calories": "240 kcal",
+                "protein": "14g",
+                "carbohydrates": "6g",
+                "fat": "18g"
+            },
+            "youtube_search_query": f"{clean_name} recipe in {language}"
+        }
+    elif "biryani" in lower_name or "pulao" in lower_name or "rice" in lower_name:
+        return {
+            "recipe_name": clean_name if clean_name else "Vegetable Biryani",
+            "meal_type": meal_type or "Lunch",
+            "description": "Fragrant Basmati rice layered with spiced mixed vegetables, fresh mint, and saffron.",
+            "servings": 4,
+            "cooking_time_minutes": 40,
+            "ingredients": [
+                {"name": "Basmati Rice", "quantity": "1.5", "unit": "cups"},
+                {"name": "Mixed Vegetables (Carrot, Peas, Beans)", "quantity": "2", "unit": "cups chopped"},
+                {"name": "Onion", "quantity": "2", "unit": "large, sliced"},
+                {"name": "Yogurt (Curd)", "quantity": "1/2", "unit": "cup"},
+                {"name": "Ginger Garlic Paste", "quantity": "1", "unit": "tbsp"},
+                {"name": "Biryani Masala", "quantity": "1.5", "unit": "tbsp"},
+                {"name": "Whole Spices (Cinnamon, Bay Leaf, Cardamom)", "quantity": "1", "unit": "set"},
+                {"name": "Ghee or Oil", "quantity": "2", "unit": "tbsp"},
+                {"name": "Mint & Coriander", "quantity": "1/2", "unit": "cup chopped"}
+            ],
+            "preparation_steps": [
+                "Wash basmati rice thoroughly until water runs clear and soak for 30 minutes.",
+                "Chop carrots, French beans, and potatoes into uniform bite-sized cubes.",
+                "Thinly slice onions for golden frying.",
+                "Whisk yogurt with biryani masala, turmeric, chilli powder, and ginger-garlic paste.",
+                "Marinate chopped vegetables in the spiced yogurt mixture for 20 minutes."
+            ],
+            "cooking_steps": [
+                "Boil 6 cups of water with whole spices and salt; cook soaked rice until 80% done, then drain.",
+                "Heat oil in a heavy bottomed pot and fry sliced onions until golden crisp; set half aside.",
+                "Add marinated vegetables to the pot and sauté over medium heat for 6–8 minutes.",
+                "Layer the partially cooked basmati rice evenly over the vegetable curry layer.",
+                "Top with chopped mint, coriander, fried onions, and a drizzle of ghee.",
+                "Cover tightly with a lid and cook on low heat (Dum) for 15–20 minutes.",
+                "Gently fluff the rice with a fork before serving.",
+                "Serve hot alongside cucumber raita and crisp papad."
+            ],
+            "nutrition": {
+                "calories": "380 kcal",
+                "protein": "9g",
+                "carbohydrates": "64g",
+                "fat": "10g"
+            },
+            "youtube_search_query": f"{clean_name} recipe in {language}"
+        }
+    elif "paneer" in lower_name or "tikka" in lower_name or "curry" in lower_name or "masala" in lower_name:
+        return {
+            "recipe_name": clean_name if clean_name else "Paneer Tikka Masala",
+            "meal_type": meal_type or "Dinner",
+            "description": "Succulent cottage cheese cubes simmered in a creamy, rich tomato gravy with aromatic spices.",
+            "servings": 3,
+            "cooking_time_minutes": 35,
+            "ingredients": [
+                {"name": "Paneer (Cottage Cheese)", "quantity": "250", "unit": "grams, cubed"},
+                {"name": "Tomatoes", "quantity": "3", "unit": "medium, pureed"},
+                {"name": "Onions", "quantity": "2", "unit": "medium, finely chopped"},
+                {"name": "Heavy Cream or Cashew Paste", "quantity": "2", "unit": "tbsp"},
+                {"name": "Butter or Oil", "quantity": "2", "unit": "tbsp"},
+                {"name": "Garam Masala", "quantity": "1", "unit": "tsp"},
+                {"name": "Kasuri Methi (Dried Fenugreek)", "quantity": "1", "unit": "tsp crushed"}
+            ],
+            "preparation_steps": [
+                "Cut paneer into uniform 1-inch cubes.",
+                "Puree fresh tomatoes, ginger, and garlic into a smooth paste.",
+                "Finely chop onions and measure all dry ground spices.",
+                "Lightly pan-fry paneer cubes in 1 tsp oil until golden on edges."
+            ],
+            "cooking_steps": [
+                "Melt butter in a pan over medium flame and saute cumin seeds until crackling.",
+                "Add chopped onions and saute for 4–5 minutes until light golden brown.",
+                "Pour in tomato puree and cook until oil separates from the gravy (6–8 minutes).",
+                "Add turmeric, coriander powder, Kashmiri red chilli, and salt; mix well.",
+                "Add 1/2 cup warm water to adjust gravy consistency and bring to a simmer.",
+                "Gently stir in the pan-fried paneer cubes.",
+                "Simmer on low heat for 5 minutes allowing paneer to absorb the flavors.",
+                "Stir in heavy cream, garam masala, and crushed kasuri methi.",
+                "Serve warm with whole wheat phulkas or naan."
+            ],
+            "nutrition": {
+                "calories": "320 kcal",
+                "protein": "16g",
+                "carbohydrates": "12g",
+                "fat": "24g"
+            },
+            "youtube_search_query": f"{clean_name} recipe in {language}"
+        }
+    else:
+        return {
+            "recipe_name": clean_name if clean_name else "Vegetable Sandwich",
+            "meal_type": meal_type or "Snack",
+            "description": "A fresh, crispy toasted sandwich filled with vibrant sliced vegetables and green mint chutney.",
+            "servings": 2,
+            "cooking_time_minutes": 15,
+            "ingredients": [
+                {"name": "Whole Wheat Bread Slices", "quantity": "4", "unit": "slices"},
+                {"name": "Cucumber", "quantity": "1", "unit": "sliced"},
+                {"name": "Tomato", "quantity": "1", "unit": "sliced"},
+                {"name": "Boiled Potato", "quantity": "1", "unit": "sliced"},
+                {"name": "Green Mint Chutney", "quantity": "2", "unit": "tbsp"},
+                {"name": "Butter", "quantity": "1", "unit": "tbsp"},
+                {"name": "Chaat Masala", "quantity": "1/2", "unit": "tsp"}
+            ],
+            "preparation_steps": [
+                "Boil and slice the potato into thin rounds.",
+                "Slice cucumber, tomato, and onion into thin rounds.",
+                "Trim bread edges if desired and spread butter on one side of each slice.",
+                "Spread green mint chutney evenly over the buttered bread slices."
+            ],
+            "cooking_steps": [
+                "Arrange potato, cucumber, and tomato slices evenly on two bread slices.",
+                "Sprinkle chaat masala and black salt over the vegetable layers.",
+                "Cover with the remaining bread slices, buttered side facing inward.",
+                "Heat a sandwich toaster or pan over medium flame with a little butter.",
+                "Place sandwiches in the pan and press down gently with a spatula.",
+                "Toast for 2–3 minutes on each side until golden and crispy.",
+                "Cut diagonally into halves.",
+                "Serve immediately with tomato ketchup or fresh mint chutney."
+            ],
+            "nutrition": {
+                "calories": "210 kcal",
+                "protein": "6g",
+                "carbohydrates": "36g",
+                "fat": "5g"
+            },
+            "youtube_search_query": f"{clean_name} recipe in {language}"
+        }
+
+
+# -----------------------------------
+# DAILY RECIPE GENERATOR (STRUCTURED JSON)
+# -----------------------------------
+def generate_recipe(dish_name, meal_type="Breakfast", language="English"):
+    clean_dish_name = str(dish_name or "").strip()
+    
+    # Handle if dish_name was passed as date or day
+    if re.match(r'^\d{4}-\d{2}-\d{2}$', clean_dish_name) or clean_dish_name in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]:
+        clean_dish_name = str(meal_type or "Vegetable Masala Omelette").strip()
+        meal_type = "Breakfast"
+
+    # If dish_name is generic like "Breakfast", resolve to realistic food dish
+    if not clean_dish_name or clean_dish_name.lower() in ["breakfast", "lunch", "dinner", "snack", "snacks", "nutritious healthy meal", "healthy meal"]:
+        m_lower = str(meal_type or "").lower()
+        if "lunch" in m_lower:
+            clean_dish_name = "Vegetable Biryani"
+        elif "dinner" in m_lower:
+            clean_dish_name = "Paneer Tikka Masala"
+        elif "snack" in m_lower:
+            clean_dish_name = "Vegetable Sandwich"
+        else:
+            clean_dish_name = "Vegetable Masala Omelette"
+
+    system_prompt = (
+        "You are an expert master chef and culinary nutritionist. "
+        "Generate a complete, structured JSON recipe response. "
+        "You MUST respond ONLY in valid JSON matching the exact schema."
+    )
+
     prompt = f"""
-I need a step-by-step professional cooking recipe for the following meal: {meal} (for {day}).
+Generate a complete, professional, detailed recipe for the dish: "{clean_dish_name}".
+Meal Type: {meal_type}
+Language for instructions, description, and ingredients: {language}
 
-The meal might contain multiple individual items. For EACH item in the meal, keep the preparation completely separate.
-Generate the recipe content in this language: {language}.
+CRITICAL MANDATORY RULES:
+1. "recipe_name" MUST be the exact food/dish name (e.g. "{clean_dish_name}"). NEVER use generic meal names like "Breakfast", "Lunch", "Dinner", "Snack", or "Nutritious Healthy Meal".
+2. "ingredients" MUST be an array of objects, where each object contains "name", "quantity", and "unit".
+3. "preparation_steps" MUST contain 6 to 12 detailed, sequential, actionable steps explaining how to clean, cut, and prep ingredients.
+4. "cooking_steps" MUST contain 6 to 12 detailed, sequential, actionable steps describing heat levels, cooking times, and pan actions.
+5. "nutrition" MUST be an object with string values for "calories", "protein", "carbohydrates", and "fat".
+6. "youtube_search_query" MUST be a clean search query string for YouTube, e.g. "{clean_dish_name} recipe in {language}".
 
-Format MUST be exactly (repeat this entire block for EACH item in the meal):
-
-Meal Item Name: [Name of the dish in English and {language}]
-
-YouTube Video Search Link: https://www.youtube.com/results?search_query=how+to+make+[Replace_with_English_Dish_Name_using_plus_for_spaces]+recipe+in+{language}
-
-Ingredients:
-- [Item 1]
-- [Item 2]
-
-Preparation Guide (Brief):
-[A short paragraph on preparing the ingredients before cooking]
-
-Step-by-Step Cooking:
-Step 1: [Action]
-Step 2: [Action]
-...
-
-Cooking Time: [Time]
-Special Tips: [Brief Tip]
----
+Return JSON matching this exact structure:
+{{
+  "recipe_name": "{clean_dish_name}",
+  "meal_type": "{meal_type}",
+  "description": "Appetizing description in {language}",
+  "servings": 2,
+  "cooking_time_minutes": 25,
+  "ingredients": [
+    {{
+      "name": "Ingredient name",
+      "quantity": "1",
+      "unit": "cup"
+    }}
+  ],
+  "preparation_steps": [
+    "Step 1...",
+    "Step 2...",
+    "Step 3...",
+    "Step 4...",
+    "Step 5...",
+    "Step 6..."
+  ],
+  "cooking_steps": [
+    "Step 1...",
+    "Step 2...",
+    "Step 3...",
+    "Step 4...",
+    "Step 5...",
+    "Step 6..."
+  ],
+  "nutrition": {{
+    "calories": "280 kcal",
+    "protein": "12g",
+    "carbohydrates": "35g",
+    "fat": "10g"
+  }},
+  "youtube_search_query": "{clean_dish_name} recipe in {language}"
+}}
 """
 
-    res = ask_groq(prompt)
-    if res and "Ingredients:" in res:
+    res = ask_groq_json(prompt, system_prompt)
+
+    if res and isinstance(res, dict) and "recipe_name" in res and "ingredients" in res:
+        r_name = str(res.get("recipe_name", "")).strip()
+        if not r_name or r_name.lower() in ["breakfast", "lunch", "dinner", "snack", "snacks", "nutritious healthy meal"]:
+            res["recipe_name"] = clean_dish_name
+
+        if isinstance(res.get("ingredients"), list):
+            formatted_ing = []
+            for item in res["ingredients"]:
+                if isinstance(item, dict):
+                    formatted_ing.append({
+                        "name": str(item.get("name", "Ingredient")),
+                        "quantity": str(item.get("quantity", "1")),
+                        "unit": str(item.get("unit", "pcs"))
+                    })
+                elif isinstance(item, str):
+                    formatted_ing.append({
+                        "name": item,
+                        "quantity": "1",
+                        "unit": "unit"
+                    })
+            res["ingredients"] = formatted_ing
+
+        if not isinstance(res.get("preparation_steps"), list):
+            res["preparation_steps"] = [str(res.get("preparation_steps", "Prepare fresh ingredients."))]
+        if not isinstance(res.get("cooking_steps"), list):
+            res["cooking_steps"] = [str(res.get("cooking_steps", "Cook over medium flame until done."))]
+
+        query = res.get("youtube_search_query") or f"{clean_dish_name} recipe in {language}"
+        res["youtube_url"] = get_youtube_url(query)
         return res
 
-    # Clean fallback recipe parsing structure
-    clean_meal_name = meal.split('(')[0].strip() if '(' in meal else meal
-    query_name = clean_meal_name.replace(' ', '+')
+    fallback = get_fallback_structured_recipe(clean_dish_name, meal_type, language)
+    fallback["youtube_url"] = get_youtube_url(fallback.get("youtube_search_query"))
+    return fallback
 
-    return f"""Meal Item Name: {clean_meal_name}
-
-YouTube Video Search Link: https://www.youtube.com/results?search_query=how+to+make+{query_name}+recipe+in+{language}
-
-Ingredients:
-- Fresh Main Ingredients - 250g
-- Chopped Onions & Tomatoes - 1 cup
-- Indian Spices (Turmeric, Cumin, Garam Masala) - 1 tsp each
-- Cold Pressed Cooking Oil - 2 tbsp
-- Fresh Coriander Leaves - for garnish
-
-Preparation Guide (Brief):
-Wash and finely chop all vegetables. Measure spices and keep oil ready in a cooking pan.
-
-Step-by-Step Cooking:
-Step 1: Heat oil in a pan over medium flame and saute cumin seeds until fragrant.
-Step 2: Add chopped onions and ginger-garlic paste; saute until golden brown.
-Step 3: Add tomatoes and spices; cook until oil separates from the masala.
-Step 4: Add the main ingredient with 1/2 cup water, cover, and simmer for 10-12 minutes.
-Step 5: Garnish with fresh coriander leaves and serve warm.
-
-Cooking Time: 20 mins
-Special Tips: Serve fresh with whole wheat rotis or brown rice for maximum nutritional benefit.
----"""
 
 
 # -----------------------------------
