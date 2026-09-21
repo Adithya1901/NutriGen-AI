@@ -10,12 +10,21 @@ load_dotenv()
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-SUPPORTED_MODELS = [
-    "llama-3.3-70b-versatile",
-    "llama-3.1-8b-instant",
-    "gemma2-9b-it",
-    "mixtral-8x7b-32768"
-]
+GROQ_MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b").strip()
+
+def get_supported_models() -> list:
+    primary = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b").strip()
+    fallbacks = [
+        "qwen/qwen3.8-27b",
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
+        "gemma2-9b-it"
+    ]
+    models = [primary]
+    for m in fallbacks:
+        if m not in models:
+            models.append(m)
+    return models
 
 GENERIC_MEAL_NAMES = {
     "breakfast", "lunch", "dinner", "snack", "snacks",
@@ -66,7 +75,7 @@ def ask_groq(prompt: str, system_prompt: str = None) -> str:
     last_status = None
     last_error_msg = ""
 
-    for model_name in SUPPORTED_MODELS:
+    for model_name in get_supported_models():
         data = {
             "model": model_name,
             "messages": messages,
@@ -137,7 +146,7 @@ def ask_groq_json(prompt: str, system_prompt: str = None) -> dict:
     last_status = None
     last_error_msg = ""
 
-    for model_name in SUPPORTED_MODELS:
+    for model_name in get_supported_models():
         data = {
             "model": model_name,
             "messages": messages,
