@@ -8,6 +8,7 @@ function Recipes() {
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedMealType, setSelectedMealType] = useState("Breakfast");
   const [selectedLanguage, setSelectedLanguage] = useState("English");
+  const [searchQuery, setSearchQuery] = useState("");
   
   const [recipe, setRecipe] = useState(null);
   const [mealDescription, setMealDescription] = useState("");
@@ -59,12 +60,17 @@ function Recipes() {
     }
   };
 
-  const loadRecipe = async () => {
+  const loadRecipe = async (recipeNameOverride) => {
     if (!selectedFamily) {
       setError("Please select or create a family first.");
       return;
     }
-    if (!selectedDate) {
+
+    const termToUse = typeof recipeNameOverride === "string" 
+      ? recipeNameOverride.trim() 
+      : searchQuery.trim();
+
+    if (!termToUse && !selectedDate) {
       setError("Please select a date for the recipe.");
       return;
     }
@@ -81,12 +87,20 @@ function Recipes() {
     setCompletedSteps({});
 
     try {
+      const queryParams = {
+        meal_type: selectedMealType,
+        language: selectedLanguage
+      };
+
+      if (termToUse) {
+        queryParams.recipe_name = termToUse;
+      }
+      if (selectedDate) {
+        queryParams.date = selectedDate;
+      }
+
       const res = await api.get(`/families/${selectedFamily}/recipe`, {
-        params: {
-          date: selectedDate,
-          meal_type: selectedMealType,
-          language: selectedLanguage
-        }
+        params: queryParams
       });
       setRecipe(res.data.recipe);
       setMealDescription(res.data.meal_description || "");
@@ -107,6 +121,15 @@ function Recipes() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSearchRecipe = (overrideTerm) => {
+    const term = (overrideTerm !== undefined ? overrideTerm : searchQuery).trim();
+    if (!term) {
+      setError("Please enter a recipe name.");
+      return;
+    }
+    loadRecipe(term);
   };
 
   const toggleIngredient = (id) => {
@@ -156,7 +179,6 @@ function Recipes() {
           cooking_time_minutes: comp.cooking_time_minutes || 10
         }));
       } else {
-        // Fallback for single component
         const ingredients = Array.isArray(data.ingredients)
           ? data.ingredients.map(ing => {
               if (typeof ing === "object" && ing !== null) {
@@ -213,6 +235,96 @@ function Recipes() {
             👩‍🍳 AI Master Recipe Generator
           </h1>
           <p style={{ color: "#64748b", marginTop: "5px" }}>Current System Time: {currentTime}</p>
+        </div>
+      </div>
+
+      {/* Recipe Search Box */}
+      <div 
+        className="card anim-fade-in" 
+        style={{ 
+          borderTop: "4px solid #0ea5e9", 
+          marginTop: "20px", 
+          padding: "20px",
+          background: "rgba(15, 23, 42, 0.7)"
+        }}
+      >
+        <label 
+          htmlFor="recipe-search-input" 
+          style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px", color: "#38bdf8", fontWeight: "700", fontSize: "1.05rem" }}
+        >
+          🔍 Search Recipe
+        </label>
+        
+        <form 
+          onSubmit={(e) => { e.preventDefault(); handleSearchRecipe(); }} 
+          style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap" }}
+        >
+          <div style={{ position: "relative", flex: "1 1 300px" }}>
+            <span style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: "#64748b", fontSize: "1rem", pointerEvents: "none" }}>
+              🔍
+            </span>
+            <input 
+              id="recipe-search-input"
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search for a recipe (e.g., Masala Dosa, Paneer Butter Masala, Idli...)"
+              style={{
+                width: "100%",
+                padding: "12px 14px 12px 42px",
+                borderRadius: "10px",
+                background: "#0f172a",
+                border: "1px solid rgba(56, 189, 248, 0.3)",
+                color: "#f8fafc",
+                fontSize: "0.95rem",
+                outline: "none",
+                boxShadow: "0 2px 8px rgba(0,0,0,0.2)"
+              }}
+            />
+          </div>
+
+          <button 
+            type="submit"
+            disabled={loading}
+            style={{
+              background: loading ? "#64748b" : "linear-gradient(135deg, #0ea5e9, #2563eb)",
+              color: "#ffffff",
+              fontWeight: "700",
+              padding: "12px 22px",
+              borderRadius: "10px",
+              cursor: "pointer",
+              border: "none",
+              boxShadow: "0 4px 12px rgba(14, 165, 233, 0.3)",
+              marginTop: 0
+            }}
+          >
+            {loading ? "Searching..." : "Search Recipe"}
+          </button>
+        </form>
+
+        {/* Suggestions */}
+        <div style={{ marginTop: "12px", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", fontSize: "0.85rem", color: "#94a3b8" }}>
+          <span>Try:</span>
+          {["Masala Dosa", "Paneer Butter Masala", "Biryani", "Idli", "Pasta"].map((suggestion) => (
+            <span 
+              key={suggestion}
+              onClick={() => {
+                setSearchQuery(suggestion);
+                handleSearchRecipe(suggestion);
+              }}
+              style={{
+                background: "#1e293b",
+                color: "#38bdf8",
+                border: "1px solid rgba(56, 189, 248, 0.25)",
+                padding: "3px 10px",
+                borderRadius: "14px",
+                cursor: "pointer",
+                fontWeight: "500"
+              }}
+            >
+              • {suggestion}
+            </span>
+          ))}
         </div>
       </div>
 
