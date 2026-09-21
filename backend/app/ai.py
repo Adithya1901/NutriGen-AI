@@ -5,15 +5,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-MODEL = "qwen/qwen3.8-27b"
+MODEL = "llama-3.3-70b-versatile"
 FALLBACK_MODELS = [
-    "qwen/qwen3.8-27b",
-    "openai/gpt-oss-120b",
-    "openai/gpt-oss-20b",
-    "groq/compound",
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+    "llama3-70b-8192",
+    "llama3-8b-8192",
+    "mixtral-8x7b-32768",
+    "gemma2-9b-it"
 ]
 
 
@@ -21,12 +21,13 @@ FALLBACK_MODELS = [
 # CORE GROQ FUNCTION
 # -----------------------------------
 def ask_groq(prompt):
+    api_key = os.getenv("GROQ_API_KEY")
 
-    if not GROQ_API_KEY:
-        return "ERROR: GROQ_API_KEY missing in .env file"
+    if not api_key:
+        return "ERROR: GROQ_API_KEY missing in backend environment"
 
     headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
 

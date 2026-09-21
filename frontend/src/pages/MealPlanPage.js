@@ -66,7 +66,10 @@ function MealPlanPage() {
   };
 
   const generateAndLoadPlan = async () => {
-    if (!selectedFamily) return;
+    if (!selectedFamily) {
+      setError("Please create or select a family before generating a meal plan.");
+      return;
+    }
     if (selectedMeals.length === 0) {
       setError("Please select at least one meal to generate.");
       return;
@@ -94,7 +97,7 @@ function MealPlanPage() {
         }
       }, 150);
     } catch (err) {
-      console.error(err);
+      console.error("Failed to generate meal plan:", err);
       const detailMsg = err.response?.data?.detail || err.message || "Failed to load or generate plan. Please try again.";
       setError(detailMsg);
     } finally {

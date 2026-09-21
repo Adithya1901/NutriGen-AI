@@ -8,6 +8,8 @@ from typing import List
 from app import schemas
 import json
 import re
+import traceback
+
 router = APIRouter()
 
 @router.get("/families/{id}/weekly-plan")

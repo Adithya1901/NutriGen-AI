@@ -60,7 +60,18 @@ function Recipes() {
   };
 
   const loadRecipe = async () => {
-    if (!selectedFamily || !selectedDate || !selectedMealType) return;
+    if (!selectedFamily) {
+      setError("Please select or create a family first.");
+      return;
+    }
+    if (!selectedDate) {
+      setError("Please select a date for the recipe.");
+      return;
+    }
+    if (!selectedMealType) {
+      setError("Please select a meal time.");
+      return;
+    }
     
     setLoading(true);
     setRecipe("");
@@ -87,11 +98,11 @@ function Recipes() {
         }
       }, 150);
     } catch (err) {
-      console.error(err);
+      console.error("Failed to fetch AI recipe:", err);
       if (err.response && err.response.data && err.response.data.detail) {
         setError(err.response.data.detail);
       } else {
-        setError("Failed to fetch recipe. Make sure the meal plan is generated for this date and time.");
+        setError(err.message || "Failed to fetch recipe. Make sure the meal plan is generated for this date and time.");
       }
     } finally {
       setLoading(false);
